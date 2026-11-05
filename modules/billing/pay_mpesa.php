@@ -2,44 +2,52 @@
 session_start();
 require_once '../../config/db.php';
 
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'STUDENT') {
+    header("Location: ../auth/login.php");
+    exit;
+}
+
+$stmt = $pdo->prepare("SELECT * FROM users WHERE user_id = ?");
+$stmt->execute([$_SESSION['user_id']]);
+$user = $stmt->fetch();
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $user_id = $_SESSION['user_id'];
-    $phone = $_POST['phone'];
+    $pay_amount = floatval($_POST['amount']);
 
-    // Fetch debt
-    $stmt = $pdo->prepare("SELECT current_balance FROM users WHERE user_id = ?");
-    $stmt->execute([$user_id]);
-    $balance = $stmt->fetchColumn();
-
-    if ($balance > 0) {
-        // Mock M-Pesa STK Push Settlement
-        $pdo->beginTransaction();
-        
-        // Zero balance
-        $pdo->prepare("UPDATE users SET current_balance = 0.00, account_status = 'ACTIVE' WHERE user_id = ?")->execute([$user_id]);
-        
-        // Update Invoices
-        $pdo->prepare("UPDATE semester_invoices SET payment_status = 'PAID' WHERE user_id = ?")->execute([$user_id]);
-
-        $pdo->commit();
-        echo "<h3>M-Pesa Payment Received from $phone. KES " . number_format($balance, 2) . " Cleared! Account is active.</h3>";
-        echo "<a href='../auth/dashboard.php'>Return to Dashboard</a>";
-        exit;
+    if ($pay_amount <= 0 || $pay_amount > $user['current_balance']) {
+        $error = "Invalid payment amount.";
     } else {
-        echo "No outstanding balance to clear.";
+        $new_balance = $user['current_balance'] - $pay_amount;
+        $status = ($new_balance == 0) ? 'ACTIVE' : $user['account_status'];
+
+        $update = $pdo->prepare("UPDATE users SET current_balance = ?, account_status = ? WHERE user_id = ?");
+        $update->execute([$new_balance, $status, $user['user_id']]);
+
+        echo "<script>alert('Payment Received via M-Pesa!'); window.location.href='../auth/dashboard.php';</script>";
+        exit;
     }
 }
+
+require_once '../../includes/header.php';
 ?>
 
-<!DOCTYPE html>
-<html>
-<head><title>Pay Tab via M-Pesa</title></head>
-<body>
-    <h2>M-Pesa Settlement Gateway</h2>
-    <form method="POST">
-        <label>M-Pesa Phone Number:</label><br>
-        <input type="text" name="phone" placeholder="254712345678" required><br><br>
-        <button type="submit">Pay Outstanding Balance</button>
-    </form>
-</body>
-</html>
+<div style="max-width: 450px; margin: 0 auto;">
+    <div class="card">
+        <h3>M-Pesa Tab Settlement</h3>
+        <p><strong>Outstanding Balance:</strong> KSh <?= number_format($user['current_balance'], 2) ?></p>
+        <?php if (!empty($error)): ?><p style="color: var(--danger);"><?= $error ?></p><?php endif; ?>
+        <form method="POST">
+            <div class="form-group">
+                <label>M-Pesa Mobile Number</label>
+                <input type="text" name="phone" value="<?= htmlspecialchars($user['phone']) ?>" required>
+            </div>
+            <div class="form-group">
+                <label>Amount to Pay (KSh)</label>
+                <input type="number" step="0.01" name="amount" value="<?= $user['current_balance'] ?>" required>
+            </div>
+            <button type="submit" class="btn" style="width: 100%;">Pay via M-Pesa Express</button>
+        </form>
+    </div>
+</div>
+
+<?php require_once '../../includes/footer.php'; ?>
