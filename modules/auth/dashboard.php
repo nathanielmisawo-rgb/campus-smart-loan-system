@@ -7,15 +7,23 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
+// Fetch user profile details
 $stmt = $pdo->prepare("SELECT * FROM users WHERE user_id = ?");
 $stmt->execute([$_SESSION['user_id']]);
 $user = $stmt->fetch();
+
+// Initialize variables with default values to prevent undefined variable warnings
+$total_students = 0;
+$total_debt = 0.00;
+$available_credit = 0.00;
+$transactions = [];
 
 if ($user['role'] === 'ADMIN') {
     $total_students = $pdo->query("SELECT COUNT(*) FROM users WHERE role = 'STUDENT'")->fetchColumn();
     $total_debt = $pdo->query("SELECT SUM(current_balance) FROM users WHERE role = 'STUDENT'")->fetchColumn();
 } else {
     $available_credit = $user['credit_limit'] - $user['current_balance'];
+    
     $tx_stmt = $pdo->prepare("SELECT t.*, f.facility_name FROM transactions t JOIN facilities f ON t.facility_id = f.facility_id WHERE t.user_id = ? ORDER BY t.created_at DESC");
     $tx_stmt->execute([$_SESSION['user_id']]);
     $transactions = $tx_stmt->fetchAll();
@@ -65,14 +73,20 @@ require_once '../../includes/header.php';
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($transactions as $tx): ?>
-                <tr>
-                    <td><?= $tx['created_at'] ?></td>
-                    <td><?= htmlspecialchars($tx['facility_name']) ?></td>
-                    <td>KSh <?= number_format($tx['amount'], 2) ?></td>
-                    <td><?= $tx['status'] ?></td>
-                </tr>
-                <?php endforeach; ?>
+                <?php if (empty($transactions)): ?>
+                    <tr>
+                        <td colspan="4" style="text-align: center; color: var(--text-muted);">No transactions recorded yet.</td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($transactions as $tx): ?>
+                    <tr>
+                        <td><?= $tx['created_at'] ?></td>
+                        <td><?= htmlspecialchars($tx['facility_name']) ?></td>
+                        <td>KSh <?= number_format($tx['amount'], 2) ?></td>
+                        <td><?= $tx['status'] ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
     </div>
