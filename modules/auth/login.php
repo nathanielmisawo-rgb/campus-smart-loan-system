@@ -20,21 +20,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: dashboard.php");
         exit;
     } else {
-        $message = "Invalid Strathmore Credentials.";
+        $message = 'Invalid Strathmore Credentials.';
     }
 }
 ?>
-
 <!DOCTYPE html>
-<html>
-<head><title>Strathmore SSO Login</title></head>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strathmore SSO Login</title>
+    <link rel="stylesheet" href="/campus_smart_loan_system/public/css/style.css">
+</head>
 <body>
-    <h2>Strathmore Single Sign-On (SSO)</h2>
-    <?php if($message): ?><p style="color:red;"><?= $message ?></p><?php endif; ?>
-    <form method="POST">
-        <label>Student / Staff ID:</label><br>
-        <input type="text" name="student_id" required placeholder="e.g., 100001"><br><br>
-        <button type="submit">Sign In via SSO</button>
-    </form>
+    <main class="container" style="display:flex;align-items:center;justify-content:center;flex:1;">
+        <div class="card" style="max-width:400px;width:100%;">
+            <h2 style="margin-top:0;color:var(--primary-hover);">Strathmore Single Sign-On (SSO)</h2>
+            <?php if ($message): ?>
+                <p style="color:var(--danger);"><?= htmlspecialchars($message) ?></p>
+            <?php endif; ?>
+            <form method="POST">
+                <div class="form-group">
+                    <label for="student_id">Student / Staff ID:</label>
+                    <input type="text" id="student_id" name="student_id" required placeholder="e.g., 100001">
+                </div>
+                <button type="submit" class="btn" style="width:100%;">Sign In via SSO</button>
+            </form>
+        </div>
+    </main>
 </body>
 </html>
