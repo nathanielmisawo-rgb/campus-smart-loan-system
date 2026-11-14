@@ -8,29 +8,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = trim($_POST['student_id'] ?? $_POST['user_id'] ?? '');
 
     if ($id !== '') {
-        // Check database for matching student/staff ID
-        $stmt = $pdo->prepare("SELECT * FROM students WHERE student_id = ? OR admission_no = ? LIMIT 1");
-        $stmt->execute([$id, $id]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $user = null;
+
+        // Safely check the users table if it exists in campus_smart_loan
+        try {
+            $stmt = $pdo->prepare("SELECT * FROM users WHERE user_id = ? OR student_id = ? OR admission_no = ? LIMIT 1");
+            $stmt->execute([$id, $id, $id]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            // Ignore table/column mismatch and fall back to SSO session below
+            $user = null;
+        }
 
         if ($user) {
-            $_SESSION['user_id'] = $user['student_id'] ?? $id;
-            $_SESSION['student_id'] = $user['student_id'] ?? $id;
-            $_SESSION['full_name'] = $user['full_name'] ?? 'Campus User';
-            $_SESSION['role'] = $user['role'] ?? 'admin';
-
-            header('Location: /campus-smart-loan-system/modules/auth/dashboard.php');
-            exit;
+            $_SESSION['user_id'] = $user['user_id'] ?? $user['student_id'] ?? $id;
+            $_SESSION['student_id'] = $user['student_id'] ?? $user['user_id'] ?? $id;
+            $_SESSION['full_name'] = $user['full_name'] ?? $user['name'] ?? 'Campus User';
+            $_SESSION['role'] = $user['role'] ?? (strtolower($id) === 'admin' ? 'admin' : 'student');
         } else {
-            // Fallback demo SSO login if ID isn't seeded in students table yet
+            // SSO session fallback (handles 'admin', '100001', etc.)
             $_SESSION['user_id'] = $id;
             $_SESSION['student_id'] = $id;
-            $_SESSION['full_name'] = 'Admin User';
-            $_SESSION['role'] = 'admin';
-
-            header('Location: /campus-smart-loan-system/modules/auth/dashboard.php');
-            exit;
+            $_SESSION['full_name'] = (strtolower($id) === 'admin') ? 'System Admin' : 'Campus User (' . $id . ')';
+            $_SESSION['role'] = (strtolower($id) === 'admin') ? 'admin' : 'student';
         }
+
+        $baseUrl = rtrim(dirname($_SERVER['SCRIPT_NAME'], 3), '/\\');
+        header('Location: ' . $baseUrl . '/modules/auth/dashboard.php');
+        exit;
     } else {
         $error = 'Please enter a valid Student or Staff ID.';
     }
