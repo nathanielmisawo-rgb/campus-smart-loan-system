@@ -5,37 +5,26 @@ require_once '../../config/db.php';
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $id = trim($_POST['student_id'] ?? $_POST['user_id'] ?? '');
+    $id = trim($_POST['user_id'] ?? $_POST['student_id'] ?? '');
 
     if ($id !== '') {
-        $user = null;
-
-        // Safely check the users table if it exists in campus_smart_loan
-        try {
-            $stmt = $pdo->prepare("SELECT * FROM users WHERE user_id = ? OR student_id = ? OR admission_no = ? LIMIT 1");
-            $stmt->execute([$id, $id, $id]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        } catch (PDOException $e) {
-            // Ignore table/column mismatch and fall back to SSO session below
-            $user = null;
-        }
+        // Look up by student_id (e.g., 100005, 100001) OR user_id (e.g., admin)
+        $stmt = $pdo->prepare("SELECT * FROM users WHERE student_id = ? OR user_id = ? LIMIT 1");
+        $stmt->execute([$id, $id]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($user) {
-            $_SESSION['user_id'] = $user['user_id'] ?? $user['student_id'] ?? $id;
-            $_SESSION['student_id'] = $user['student_id'] ?? $user['user_id'] ?? $id;
-            $_SESSION['full_name'] = $user['full_name'] ?? $user['name'] ?? 'Campus User';
-            $_SESSION['role'] = $user['role'] ?? (strtolower($id) === 'admin' ? 'admin' : 'student');
-        } else {
-            // SSO session fallback (handles 'admin', '100001', etc.)
-            $_SESSION['user_id'] = $id;
-            $_SESSION['student_id'] = $id;
-            $_SESSION['full_name'] = (strtolower($id) === 'admin') ? 'System Admin' : 'Campus User (' . $id . ')';
-            $_SESSION['role'] = (strtolower($id) === 'admin') ? 'admin' : 'student';
-        }
+            $_SESSION['user_id'] = $user['user_id'];
+            $_SESSION['student_id'] = $user['student_id'] ?? $id;
+            $_SESSION['full_name'] = $user['full_name'] ?? 'Campus User';
+            $_SESSION['role'] = $user['role'] ?? 'student';
 
-        $baseUrl = rtrim(dirname($_SERVER['SCRIPT_NAME'], 3), '/\\');
-        header('Location: ' . $baseUrl . '/modules/auth/dashboard.php');
-        exit;
+            $baseUrl = rtrim(dirname($_SERVER['SCRIPT_NAME'], 3), '/\\');
+            header('Location: ' . $baseUrl . '/modules/auth/dashboard.php');
+            exit;
+        } else {
+            $error = 'No Student or Staff account found for ID: ' . htmlspecialchars($id);
+        }
     } else {
         $error = 'Please enter a valid Student or Staff ID.';
     }
@@ -51,14 +40,14 @@ require_once '../../includes/header.php';
 
         <?php if (!empty($error)): ?>
             <div class="alert alert-danger" style="margin-bottom: 15px;">
-                <?= htmlspecialchars($error) ?>
+                <?= $error ?>
             </div>
         <?php endif; ?>
 
         <form method="POST" action="">
             <div class="form-group" style="margin-bottom: 15px;">
-                <label for="student_id">Student / Staff ID:</label>
-                <input type="text" id="student_id" name="student_id" value="100001" required>
+                <label for="user_id">Student / Staff ID:</label>
+                <input type="text" id="user_id" name="user_id" value="100005" required>
             </div>
             <button type="submit" class="btn btn-primary" style="width: 100%;">Sign In via SSO</button>
         </form>
