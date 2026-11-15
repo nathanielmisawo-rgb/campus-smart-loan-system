@@ -211,25 +211,93 @@ require_once __DIR__ . '/../../includes/header.php';
 ?>
 
 <style>
-    .cms-card { background: var(--surface, #ffffff); padding: 24px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.06); margin: 20px auto; max-width: 1050px; }
-    .cms-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border, #e5e7eb); padding-bottom: 16px; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-    .cms-header h2 { margin: 0; font-size: 1.35rem; }
-    .cms-actions { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-    .cms-btn { padding: 10px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.9rem; text-decoration: none; display: inline-block; transition: opacity 0.15s ease; }
+    .cms-card {
+        background-color: #161f33 !important;
+        color: #f8fafc !important;
+        border: 1px solid #2d3b55;
+        padding: 24px;
+        border-radius: 10px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        margin: 20px auto;
+        max-width: 1050px;
+    }
+    .cms-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #2d3b55;
+        padding-bottom: 16px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    .cms-header h2 {
+        margin: 0;
+        font-size: 1.35rem;
+        color: #ffffff !important;
+    }
+    .cms-header p {
+        color: #94a3b8 !important;
+    }
+    .cms-actions {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+    }
+    .cms-btn {
+        padding: 10px 16px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-decoration: none;
+        display: inline-block;
+        transition: opacity 0.15s ease;
+    }
     .cms-btn:hover { opacity: 0.9; }
-    .cms-btn-danger { background: #dc2626; color: #fff; }
-    .cms-btn-success { background: #16a34a; color: #fff; }
-    .cms-btn-secondary { background: #4b5563; color: #fff; }
+    .cms-btn-danger { background: #dc2626; color: #ffffff !important; }
+    .cms-btn-success { background: #16a34a; color: #ffffff !important; }
+    .cms-btn-secondary { background: #475569; color: #ffffff !important; }
     .cms-btn-sm { padding: 6px 10px; font-size: 0.8rem; }
     .cms-alert { padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 0.92rem; }
-    .cms-alert-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
-    .cms-alert-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-    .cms-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    .cms-table th, .cms-table td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border, #e5e7eb); font-size: 0.92rem; }
-    .cms-table th { background: rgba(0, 0, 0, 0.03); font-weight: 600; }
-    .cms-badge { padding: 4px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; display: inline-block; }
-    .cms-badge-held { background: #fee2e2; color: #991b1b; }
-    .cms-badge-active { background: #dcfce7; color: #166534; }
+    .cms-alert-success { background: rgba(22, 163, 74, 0.2); color: #86efac !important; border: 1px solid #16a34a; }
+    .cms-alert-error { background: rgba(220, 38, 38, 0.2); color: #fca5a5 !important; border: 1px solid #dc2626; }
+    .cms-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+    .cms-table th {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #2d3b55;
+        background-color: #0f172a !important;
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: #10b981 !important;
+    }
+    .cms-table td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #2d3b55;
+        font-size: 0.92rem;
+        color: #f1f5f9 !important;
+        background-color: transparent !important;
+    }
+    .cms-table tbody tr:hover {
+        background-color: rgba(255, 255, 255, 0.04) !important;
+    }
+    .cms-badge {
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        display: inline-block;
+    }
+    .cms-badge-held { background: #fee2e2; color: #991b1b !important; }
+    .cms-badge-active { background: #dcfce7; color: #166534 !important; }
 </style>
 
 <div class="cms-card">
