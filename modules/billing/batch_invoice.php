@@ -3,15 +3,29 @@
  * Module 3: Billing & Access Control
  * Author: Lloyd
  * File: modules/billing/batch_invoice.php
- * Description: Production batch invoicing script for campus_smart_loan.
+ * Description: Admin-protected batch invoicing script for campus_smart_loan.
  *              Aligned with official database.sql (users, transactions, semester_invoices).
- *              Generates semester-locked invoices, applies CMS holds, and logs audit events.
+ *              Bills authoritative users.current_balance, prevents duplicate semester invoices,
+ *              applies CMS holds, and logs audit events.
  */
 
 declare(strict_types=1);
+session_start();
 header('Content-Type: application/json');
 
 require_once __DIR__ . '/../../config/db.php';
+
+// 1. Access Control: Restrict batch invoicing to ADMIN accounts (or CLI cron execution)
+if (PHP_SAPI !== 'cli') {
+    if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'ADMIN') {
+        http_response_code(403);
+        echo json_encode([
+            'status'  => 'error',
+            'message' => 'Unauthorized: Administrator privileges required to run batch invoicing.'
+        ], JSON_PRETTY_PRINT);
+        exit;
+    }
+}
 
 const BILLING_CURRENCY = 'KES';
 const AUDIT_LOG_PATH   = __DIR__ . '/billing_audit.log';
@@ -27,7 +41,7 @@ function getCurrentSemesterCode(): string {
         return substr($requested, 0, 20);
     }
     $term = ((int) date('n') <= 6) ? 'S1' : 'S2';
-    return date('Y') . '-' . $term; // e.g., 2026-S2
+    return date('Y') . '-' . $term;
 }
 
 function processBatchInvoices(PDO $pdo): array {
@@ -40,14 +54,13 @@ function processBatchInvoices(PDO $pdo): array {
     $pdo->beginTransaction();
 
     try {
-        // Lock student accounts with an outstanding balance and aggregate their APPROVED POS transactions
+        // Lock student accounts with an authoritative outstanding balance > 0
         $fetchStmt = $pdo->query("
             SELECT 
                 u.user_id,
                 u.student_id,
                 u.full_name,
                 u.current_balance,
-                COALESCE(SUM(t.amount), 0.00) AS approved_tx_total,
                 COUNT(t.transaction_id) AS transaction_count
             FROM users u
             LEFT JOIN transactions t 
@@ -73,7 +86,6 @@ function processBatchInvoices(PDO $pdo): array {
             ];
         }
 
-        // Prepared statements aligned strictly to database.sql
         $checkDuplicateStmt = $pdo->prepare("
             SELECT invoice_id 
             FROM semester_invoices 
@@ -114,7 +126,6 @@ function processBatchInvoices(PDO $pdo): array {
             $currentBalance = round((float) $student['current_balance'], 2);
             $txCount        = (int) $student['transaction_count'];
 
-            // Prevent duplicate invoice for the same student in the same semester
             $checkDuplicateStmt->execute([
                 ':user_id'       => $userId,
                 ':semester_code' => $semesterCode
@@ -134,8 +145,6 @@ function processBatchInvoices(PDO $pdo): array {
             ]);
 
             $invoiceId = (int) $pdo->lastInsertId();
-
-            // Place CMS registration hold on the student's account
             $applyUserHoldStmt->execute([':user_id' => $userId]);
 
             $totalSum += $currentBalance;
