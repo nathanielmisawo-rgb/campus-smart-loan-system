@@ -42,22 +42,44 @@ CREATE TABLE IF NOT EXISTS semester_invoices (
     user_id INT NOT NULL,
     semester_code VARCHAR(20) NOT NULL,
     total_amount DECIMAL(10,2) NOT NULL,
+    amount_paid DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     payment_status ENUM('UNPAID', 'PAID', 'OVERDUE') DEFAULT 'UNPAID',
     cms_hold_applied TINYINT(1) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+-- 5. M-Pesa STK Push Payments Table
+CREATE TABLE IF NOT EXISTS mpesa_payments (
+    payment_id INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_id INT NOT NULL,
+    user_id INT NOT NULL,
+    phone_number VARCHAR(20) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    checkout_request_id VARCHAR(100) UNIQUE NOT NULL,
+    merchant_request_id VARCHAR(100) NULL,
+    mpesa_receipt_number VARCHAR(50) NULL,
+    payment_status ENUM('PENDING', 'SUCCESS', 'FAILED') DEFAULT 'PENDING',
+    result_description VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (invoice_id) REFERENCES semester_invoices(invoice_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 -- Default Seed Data (Default password for all accounts: admin123)
 INSERT INTO users (student_id, full_name, email, phone, grade, role, credit_limit, current_balance, pass) VALUES
-('ADM001', 'System Administrator', 'admin@strathmore.edu', '0700000000', 'Staff', 'ADMIN', 0.00, 0.00, '$2y$10$e0MYzXyjpJS7Pd0RVvHwHe1g.Xw0R5UqO/kY3J3k.1f6m9m5q6i2y'),
-('100001', 'Misawo Nathaniel', 'misawo@strathmore.edu', '0711111111', 'Year 3', 'STUDENT', 5000.00, 0.00, '$2y$10$e0MYzXyjpJS7Pd0RVvHwHe1g.Xw0R5UqO/kY3J3k.1f6m9m5q6i2y'),
-('100002', 'Kennedy Wayne', 'kennedy@strathmore.edu', '0722222222', 'Year 2', 'STUDENT', 5000.00, 1200.00, '$2y$10$e0MYzXyjpJS7Pd0RVvHwHe1g.Xw0R5UqO/kY3J3k.1f6m9m5q6i2y'),
-('VEND01', 'Cafeteria Operator', 'cafeteria@strathmore.edu', '0733333333', 'Staff', 'VENDOR', 0.00, 0.00, '$2y$10$e0MYzXyjpJS7Pd0RVvHwHe1g.Xw0R5UqO/kY3J3k.1f6m9m5q6i2y')
-ON DUPLICATE KEY UPDATE user_id=user_id;
+('ADM001', 'System Administrator', 'admin@strathmore.edu', '0700000000', 'Staff', 'ADMIN', 0.00, 0.00, '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'),
+('100001', 'Misawo Nathaniel', 'misawo@strathmore.edu', '0711111111', 'Year 3', 'STUDENT', 5000.00, 0.00, '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'),
+('100002', 'Kennedy Wayne', 'kennedy@strathmore.edu', '0722222222', 'Year 2', 'STUDENT', 5000.00, 1200.00, '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'),
+('VEND01', 'Cafeteria Operator', 'cafeteria@strathmore.edu', '0733333333', 'Staff', 'VENDOR', 0.00, 0.00, '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi')
+ON DUPLICATE KEY UPDATE
+    email = VALUES(email),
+    role = VALUES(role),
+    pass = VALUES(pass);
 
 INSERT INTO facilities (facility_name, category) VALUES
 ('Central Cafeteria', 'CAFETERIA'),
 ('Library Printing Hub', 'PRINTING'),
 ('Campus Book Store', 'STORE')
-ON DUPLICATE KEY UPDATE facility_id=facility_id;
+ON DUPLICATE KEY UPDATE facility_id = facility_id;

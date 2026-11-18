@@ -210,181 +210,114 @@ $students = $heldStudentsStmt->fetchAll();
 require_once __DIR__ . '/../../includes/header.php';
 ?>
 
-<style>
-    .cms-card {
-        background-color: #161f33 !important;
-        color: #f8fafc !important;
-        border: 1px solid #2d3b55;
-        padding: 24px;
-        border-radius: 10px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-        margin: 20px auto;
-        max-width: 1050px;
-    }
-    .cms-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 1px solid #2d3b55;
-        padding-bottom: 16px;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
-        gap: 12px;
-    }
-    .cms-header h2 {
-        margin: 0;
-        font-size: 1.35rem;
-        color: #ffffff !important;
-    }
-    .cms-header p {
-        color: #94a3b8 !important;
-    }
-    .cms-actions {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 20px;
-        flex-wrap: wrap;
-    }
-    .cms-btn {
-        padding: 10px 16px;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-weight: 600;
-        font-size: 0.9rem;
-        text-decoration: none;
-        display: inline-block;
-        transition: opacity 0.15s ease;
-    }
-    .cms-btn:hover { opacity: 0.9; }
-    .cms-btn-danger { background: #dc2626; color: #ffffff !important; }
-    .cms-btn-success { background: #16a34a; color: #ffffff !important; }
-    .cms-btn-secondary { background: #475569; color: #ffffff !important; }
-    .cms-btn-sm { padding: 6px 10px; font-size: 0.8rem; }
-    .cms-alert { padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 0.92rem; }
-    .cms-alert-success { background: rgba(22, 163, 74, 0.2); color: #86efac !important; border: 1px solid #16a34a; }
-    .cms-alert-error { background: rgba(220, 38, 38, 0.2); color: #fca5a5 !important; border: 1px solid #dc2626; }
-    .cms-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 10px;
-    }
-    .cms-table th {
-        padding: 12px;
-        text-align: left;
-        border-bottom: 1px solid #2d3b55;
-        background-color: #0f172a !important;
-        font-weight: 600;
-        font-size: 0.9rem;
-        color: #10b981 !important;
-    }
-    .cms-table td {
-        padding: 12px;
-        text-align: left;
-        border-bottom: 1px solid #2d3b55;
-        font-size: 0.92rem;
-        color: #f1f5f9 !important;
-        background-color: transparent !important;
-    }
-    .cms-table tbody tr:hover {
-        background-color: rgba(255, 255, 255, 0.04) !important;
-    }
-    .cms-badge {
-        padding: 4px 10px;
-        border-radius: 999px;
-        font-size: 0.78rem;
-        font-weight: 700;
-        display: inline-block;
-    }
-    .cms-badge-held { background: #fee2e2; color: #991b1b !important; }
-    .cms-badge-active { background: #dcfce7; color: #166534 !important; }
-</style>
-
-<div class="cms-card">
-    <div class="cms-header">
+<div class="card" style="max-width: 1080px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(148, 163, 184, 0.14); padding-bottom: 1.25rem; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
         <div>
-            <h2>Module 3: CMS Registration Hold Console</h2>
-            <p style="margin: 4px 0 0; font-size: 0.88rem; color: var(--text-muted, #6b7280);">
+            <h2 style="display: flex; align-items: center; gap: 0.6rem; margin: 0 0 0.25rem; font-size: 1.35rem;">
+                <i data-lucide="shield-alert" style="width: 24px; height: 24px; color: var(--danger);"></i>
+                CMS Registration Hold Console
+            </h2>
+            <p style="margin: 0; font-size: 0.88rem; color: var(--text-secondary);">
                 Enforce registration holds on overdue accounts or restore access after M-Pesa settlement.
             </p>
         </div>
-        <a href="../auth/dashboard.php" class="cms-btn cms-btn-secondary cms-btn-sm">&larr; Back to Dashboard</a>
+        <a href="../auth/dashboard.php" class="btn btn-outline" style="padding: 0.5rem 0.9rem; font-size: 0.85rem;">
+            <i data-lucide="arrow-left" style="width: 15px; height: 15px;"></i>
+            Back to Dashboard
+        </a>
     </div>
 
     <?php if ($flashMessage !== null): ?>
-        <div class="cms-alert <?= $flashType === 'error' ? 'cms-alert-error' : 'cms-alert-success' ?>">
-            <?= htmlspecialchars($flashMessage) ?>
+        <div class="alert <?= $flashType === 'error' ? 'alert-error' : 'alert-success' ?>">
+            <i data-lucide="<?= $flashType === 'error' ? 'alert-circle' : 'check-circle-2' ?>" style="width: 18px; height: 18px; flex-shrink: 0;"></i>
+            <span><?= htmlspecialchars($flashMessage) ?></span>
         </div>
     <?php endif; ?>
 
-    <div class="cms-actions">
+    <div style="display: flex; gap: 0.75rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
         <form method="POST" style="display:inline;">
             <input type="hidden" name="stay_on_page" value="1">
-            <button type="submit" name="trigger_hold" class="cms-btn cms-btn-danger"
+            <button type="submit" name="trigger_hold" class="btn btn-danger"
                     onclick="return confirm('Enforce CMS holds on all overdue student accounts?');">
+                <i data-lucide="lock" style="width: 16px; height: 16px;"></i>
                 Enforce CMS Holds on Overdue Accounts
             </button>
         </form>
 
         <form method="POST" style="display:inline;">
             <input type="hidden" name="stay_on_page" value="1">
-            <button type="submit" name="release_hold" class="cms-btn cms-btn-success">
+            <button type="submit" name="release_hold" class="btn btn-primary">
+                <i data-lucide="unlock" style="width: 16px; height: 16px;"></i>
                 Clear Holds for All Paid Accounts
             </button>
         </form>
     </div>
 
-    <table class="cms-table">
-        <thead>
-            <tr>
-                <th>Student ID</th>
-                <th>Full Name</th>
-                <th>Current Balance (KES)</th>
-                <th>Open Invoices</th>
-                <th>Account Status</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php if (empty($students)): ?>
+    <div class="table-wrap">
+        <table>
+            <thead>
                 <tr>
-                    <td colspan="6" style="text-align:center; color: var(--text-muted, #6b7280);">
-                        No held or overdue student accounts found.
-                    </td>
+                    <th>Student ID</th>
+                    <th>Full Name</th>
+                    <th>Current Balance (KES)</th>
+                    <th>Open Invoices</th>
+                    <th>Account Status</th>
+                    <th>Action</th>
                 </tr>
-            <?php else: ?>
-                <?php foreach ($students as $s): ?>
+            </thead>
+            <tbody>
+                <?php if (empty($students)): ?>
                     <tr>
-                        <td><?= htmlspecialchars($s['student_id']) ?></td>
-                        <td><?= htmlspecialchars($s['full_name']) ?></td>
-                        <td><?= number_format((float) $s['current_balance'], 2) ?></td>
-                        <td><?= (int) $s['open_invoices'] ?></td>
-                        <td>
-                            <span class="cms-badge <?= $s['account_status'] === 'HELD' ? 'cms-badge-held' : 'cms-badge-active' ?>">
-                                <?= htmlspecialchars($s['account_status']) ?>
-                            </span>
-                        </td>
-                        <td>
-                            <?php if ($s['account_status'] === 'HELD' && (float) $s['current_balance'] <= 0 && (int) $s['open_invoices'] === 0): ?>
-                                <form method="POST" style="display:inline;">
-                                    <input type="hidden" name="stay_on_page" value="1">
-                                    <input type="hidden" name="user_id" value="<?= (int) $s['user_id'] ?>">
-                                    <button type="submit" name="release_hold" class="cms-btn cms-btn-success cms-btn-sm">Release Hold</button>
-                                </form>
-                            <?php elseif ($s['account_status'] === 'HELD'): ?>
-                                <span style="color:#991b1b; font-size:0.82rem;">Awaiting M-Pesa settlement</span>
-                            <?php else: ?>
-                                <span style="color: var(--text-muted, #6b7280); font-size:0.82rem;">Pending hold sweep</span>
-                            <?php endif; ?>
+                        <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                            No held or overdue student accounts found.
                         </td>
                     </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-        </tbody>
-    </table>
+                <?php else: ?>
+                    <?php foreach ($students as $s): ?>
+                        <tr>
+                            <td><strong><?= htmlspecialchars($s['student_id']) ?></strong></td>
+                            <td>
+                                <?= htmlspecialchars($s['full_name']) ?>
+                                <span style="display: block; font-size: 0.76rem; color: var(--text-muted);">
+                                    <?= htmlspecialchars($s['email']) ?>
+                                </span>
+                            </td>
+                            <td class="tabular-nums" style="font-weight: 700;">
+                                KSh <?= number_format((float) $s['current_balance'], 2) ?>
+                            </td>
+                            <td class="tabular-nums"><?= (int) $s['open_invoices'] ?></td>
+                            <td>
+                                <span class="status-pill <?= $s['account_status'] === 'HELD' ? 'status-held' : 'status-active' ?>">
+                                    <?= htmlspecialchars($s['account_status']) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <?php if ($s['account_status'] === 'HELD' && (float) $s['current_balance'] <= 0 && (int) $s['open_invoices'] === 0): ?>
+                                    <form method="POST" style="display:inline;">
+                                        <input type="hidden" name="stay_on_page" value="1">
+                                        <input type="hidden" name="user_id" value="<?= (int) $s['user_id'] ?>">
+                                        <button type="submit" name="release_hold" class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">
+                                            Release Hold
+                                        </button>
+                                    </form>
+                                <?php elseif ($s['account_status'] === 'HELD'): ?>
+                                    <span style="color: var(--danger); font-size: 0.82rem; font-weight: 500;">
+                                        Awaiting M-Pesa settlement
+                                    </span>
+                                <?php else: ?>
+                                    <span style="color: var(--text-muted); font-size: 0.82rem;">
+                                        Pending hold sweep
+                                    </span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <?php
-
 require_once __DIR__ . '/../../includes/footer.php';
 ?>
