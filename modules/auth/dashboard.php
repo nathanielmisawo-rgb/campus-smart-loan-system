@@ -43,7 +43,7 @@ if ($user['role'] === 'ADMIN') {
     $tx_stmt->execute([$_SESSION['user_id']]);
     $transactions = $tx_stmt->fetchAll();
 
-    // Fetch consolidated semester invoices if table exists
+    // Fetch consolidated semester invoices
     try {
         $inv_stmt = $pdo->prepare("SELECT * FROM semester_invoices WHERE user_id = ? ORDER BY created_at DESC");
         $inv_stmt->execute([$_SESSION['user_id']]);
@@ -77,7 +77,7 @@ require_once '../../includes/header.php';
         <h3>Campus Vendor Portal</h3>
         <p><strong>Operator:</strong> <?= htmlspecialchars($user['full_name']) ?> (<?= htmlspecialchars($user['student_id']) ?>)</p>
         <p>Process student meal and facility tab charges directly at the Point of Sale.</p>
-        <a href="../pos/terminal.php" class="btn">Open POS Checkout Terminal</a>
+        <a href="../pos/checkout.php" class="btn">Open POS Checkout Terminal</a>
     </div>
 
 <?php else: ?>
@@ -132,19 +132,19 @@ require_once '../../includes/header.php';
         <table>
             <thead>
                 <tr>
-                    <th>Semester</th>
+                    <th>Semester Code</th>
                     <th>Total Billed</th>
-                    <th>Due Date</th>
-                    <th>Status</th>
+                    <th>CMS Hold</th>
+                    <th>Payment Status</th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($invoices as $inv): ?>
                 <tr>
-                    <td><?= htmlspecialchars($inv['semester'] ?? 'Current Semester') ?></td>
+                    <td><?= htmlspecialchars($inv['semester_code'] ?? '2026-SEM1') ?></td>
                     <td>KSh <?= number_format((float)($inv['total_amount'] ?? 0), 2) ?></td>
-                    <td><?= htmlspecialchars($inv['due_date'] ?? 'N/A') ?></td>
-                    <td><?= htmlspecialchars($inv['status'] ?? 'UNPAID') ?></td>
+                    <td><?= !empty($inv['cms_hold_applied']) ? 'APPLIED' : 'NONE' ?></td>
+                    <td><?= htmlspecialchars($inv['payment_status'] ?? 'UNPAID') ?></td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
