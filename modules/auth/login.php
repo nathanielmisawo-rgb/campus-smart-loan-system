@@ -92,6 +92,7 @@ require_once __DIR__ . '/../../includes/header.php';
 
     .login-hero h1 span {
         background: linear-gradient(135deg, #10b981 0%, #38bdf8 100%);
+        background-clip: text;
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
