@@ -1,4 +1,4 @@
 <?php
 session_start();
-header('Location: /campus-smart-loan-system/modules/auth/dashboard.php');
+header('Location: /campus_smart_loan_system/modules/auth/dashboard.php');
 exit;
