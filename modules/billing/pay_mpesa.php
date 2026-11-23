@@ -1,4 +1,3 @@
-
 <?php
 session_start();
 
@@ -348,6 +347,7 @@ require_once __DIR__ . '/../../includes/header.php';
                     <label>M-Pesa Mobile Number</label>
 
                     <input
+                        id="phone"
                         type="text"
                         name="phone"
                         value="<?= htmlspecialchars($user['phone'] ?? '') ?>"
@@ -376,7 +376,6 @@ require_once __DIR__ . '/../../includes/header.php';
                 >
                     Pay via M-Pesa
                 </button>
-
             </form>
 
         <?php endif; ?>
@@ -459,7 +458,6 @@ require_once __DIR__ . '/../../includes/header.php';
             </div>
 
         <?php endif; ?>
-
     </div>
 
 </div>
