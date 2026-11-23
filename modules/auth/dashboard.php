@@ -94,6 +94,7 @@ require_once '../../includes/header.php';
             </strong>
         </p>
         <a href="../billing/pay_mpesa.php" class="btn">Settle Tab via M-Pesa</a>
+    
     </div>
 
     <div class="card">
@@ -134,17 +135,17 @@ require_once '../../includes/header.php';
                 <tr>
                     <th>Semester</th>
                     <th>Total Billed</th>
-                    <th>Due Date</th>
+                    <th>Date Created</th>
                     <th>Status</th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($invoices as $inv): ?>
                 <tr>
-                    <td><?= htmlspecialchars($inv['semester'] ?? 'Current Semester') ?></td>
+                    <td><?= htmlspecialchars($inv['semester_code']) ?></td>
                     <td>KSh <?= number_format((float)($inv['total_amount'] ?? 0), 2) ?></td>
-                    <td><?= htmlspecialchars($inv['due_date'] ?? 'N/A') ?></td>
-                    <td><?= htmlspecialchars($inv['status'] ?? 'UNPAID') ?></td>
+                    <td><?= htmlspecialchars($inv['created_at']) ?></td>
+                    <td><?= htmlspecialchars($inv['payment_status']) ?></td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>

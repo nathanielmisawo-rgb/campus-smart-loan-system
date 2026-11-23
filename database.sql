@@ -61,3 +61,31 @@ INSERT INTO facilities (facility_name, category) VALUES
 ('Library Printing Hub', 'PRINTING'),
 ('Campus Book Store', 'STORE')
 ON DUPLICATE KEY UPDATE facility_id=facility_id;
+
+
+-- 5. M-Pesa Payments Table
+CREATE TABLE IF NOT EXISTS mpesa_payments (
+    payment_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    invoice_id INT NOT NULL,
+    phone_number VARCHAR(15) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    checkout_request_id VARCHAR(100) UNIQUE,
+    merchant_request_id VARCHAR(100),
+    mpesa_receipt_number VARCHAR(50) UNIQUE,
+    payment_status ENUM(
+        'PENDING',
+        'SUCCESS',
+        'FAILED'
+    ) DEFAULT 'PENDING',
+    result_description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id)
+        REFERENCES users(user_id),
+
+    FOREIGN KEY (invoice_id)
+        REFERENCES semester_invoices(invoice_id)
+);

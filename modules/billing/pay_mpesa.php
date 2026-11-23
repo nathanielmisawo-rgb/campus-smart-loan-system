@@ -1,11 +1,8 @@
 
 <?php
-
 session_start();
 
 require_once __DIR__ . '/../../config/db.php';
-
-$mpesa = require __DIR__ . '/../../config/mpesa_config.php';
 
 if (
     !isset($_SESSION['user_id']) ||
@@ -17,248 +14,276 @@ if (
 
 $userId = (int) $_SESSION['user_id'];
 
-$stmt = $pdo->prepare("SELECT * FROM users WHERE user_id = ?");
+$stmt = $pdo->prepare("
+    SELECT user_id, full_name, phone, current_balance, account_status
+    FROM users
+    WHERE user_id = ?
+    AND role = 'STUDENT'
+");
+
 $stmt->execute([$userId]);
 $user = $stmt->fetch();
 
 if (!$user) {
-    session_destroy();
-    header("Location: ../auth/login.php");
-    exit;
+    die("Student account not found.");
 }
 
-$error = '';
-$success = '';
+/*
+|--------------------------------------------------------------------------
+| Get the student's outstanding semester invoice
+|--------------------------------------------------------------------------
+*/
 
-// Fetch unpaid invoices belonging to this student.
 $invoiceStmt = $pdo->prepare("
-    SELECT invoice_id, semester_code, total_amount,
-           amount_paid, payment_status
+    SELECT *
     FROM semester_invoices
     WHERE user_id = ?
-      AND payment_status IN ('UNPAID', 'OVERDUE')
+    AND payment_status IN ('UNPAID', 'OVERDUE')
+    AND total_amount > amount_paid
     ORDER BY created_at DESC
+    LIMIT 1
 ");
 
 $invoiceStmt->execute([$userId]);
-$invoices = $invoiceStmt->fetchAll();
+$invoice = $invoiceStmt->fetch();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+$error = '';
+$showPin = false;
 
-    $invoiceId = (int) ($_POST['invoice_id'] ?? 0);
-    $phone = preg_replace('/\s+/', '', $_POST['phone'] ?? '');
+/*
+|--------------------------------------------------------------------------
+| Stage 1: Request payment
+|--------------------------------------------------------------------------
+*/
 
-    // Convert Kenyan phone numbers to 254 format.
-    if (preg_match('/^0[17][0-9]{8}$/', $phone)) {
-        $phone = '254' . substr($phone, 1);
-    } elseif (preg_match('/^\+[17][0-9]{8,11}$/', $phone)) {
-        $phone = substr($phone, 1);
-    }
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    ($_POST['action'] ?? '') === 'request_payment'
+) {
 
-    if (!preg_match('/^254[17][0-9]{8}$/', $phone)) {
-        $error = "Enter a valid Kenyan M-Pesa phone number.";
+    $phone = trim($_POST['phone'] ?? '');
+
+    if (!$invoice) {
+
+        $error = "You have no outstanding semester invoice.";
+
+    } elseif (!preg_match('/^254[17][0-9]{8}$/', $phone)) {
+
+        $error = "Enter a valid Kenyan mobile number.";
+
     } else {
 
-        $findInvoice = $pdo->prepare("
-            SELECT invoice_id, total_amount, amount_paid,
-                   payment_status
-            FROM semester_invoices
-            WHERE invoice_id = ?
-              AND user_id = ?
-              AND payment_status IN ('UNPAID', 'OVERDUE')
-            LIMIT 1
-        ");
+        $remaining = (float) $invoice['total_amount']
+                   - (float) $invoice['amount_paid'];
 
-        $findInvoice->execute([$invoiceId, $userId]);
-        $invoice = $findInvoice->fetch();
+        if (
+            abs($remaining - (float) $user['current_balance']) > 0.01
+        ) {
 
-        if (!$invoice) {
-            $error = "Invoice not found or already paid.";
+            $error = "Your invoice and outstanding balance do not match. Please contact the administrator.";
+
+        } elseif ($remaining <= 0) {
+
+            $error = "There is no outstanding amount to pay.";
+
         } else {
 
-            $amountDue = round(
-                (float) $invoice['total_amount'] -
-                (float) $invoice['amount_paid'],
-                2
+            $_SESSION['pending_demo_payment'] = [
+                'invoice_id' => (int) $invoice['invoice_id'],
+                'phone' => $phone,
+                'amount' => $remaining,
+                'created_at' => time()
+            ];
+
+            $showPin = true;
+        }
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Stage 2: Confirm simulated PIN
+|--------------------------------------------------------------------------
+*/
+
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    ($_POST['action'] ?? '') === 'confirm_pin'
+) {
+
+    $pending = $_SESSION['pending_demo_payment'] ?? null;
+    $pin = trim($_POST['demo_pin'] ?? '');
+
+    if (
+        !$pending ||
+        (time() - $pending['created_at']) > 600
+    ) {
+
+        unset($_SESSION['pending_demo_payment']);
+
+        $error = "Payment request expired. Please start again.";
+
+    } elseif (!preg_match('/^[0-9]{4}$/', $pin)) {
+
+        $error = "Enter exactly four digits.";
+
+        $showPin = true;
+
+    } elseif ($pin !== '1234') {
+
+        $error = "Incorrect demonstration PIN. Please try again.";
+
+        $showPin = true;
+
+    } else {
+
+        try {
+
+            $pdo->beginTransaction();
+
+            /*
+            | Lock the invoice and user records
+            */
+
+            $lockInvoice = $pdo->prepare("
+                SELECT *
+                FROM semester_invoices
+                WHERE invoice_id = ?
+                AND user_id = ?
+                FOR UPDATE
+            ");
+
+            $lockInvoice->execute([
+                $pending['invoice_id'],
+                $userId
+            ]);
+
+            $lockedInvoice = $lockInvoice->fetch();
+
+            $lockUser = $pdo->prepare("
+                SELECT current_balance
+                FROM users
+                WHERE user_id = ?
+                FOR UPDATE
+            ");
+
+            $lockUser->execute([$userId]);
+            $lockedUser = $lockUser->fetch();
+
+            if (
+                !$lockedInvoice ||
+                !$lockedUser ||
+                !in_array(
+                    $lockedInvoice['payment_status'],
+                    ['UNPAID', 'OVERDUE'],
+                    true
+                )
+            ) {
+
+                throw new Exception(
+                    "Invoice is unavailable or has already been paid."
+                );
+            }
+
+            $remaining = (float) $lockedInvoice['total_amount']
+                       - (float) $lockedInvoice['amount_paid'];
+
+            if (
+                abs($remaining - (float) $pending['amount']) > 0.01 ||
+                abs($remaining - (float) $lockedUser['current_balance']) > 0.01 ||
+                $remaining <= 0
+            ) {
+
+                throw new Exception(
+                    "Outstanding balance has changed. Please try again."
+                );
+            }
+
+            /*
+            | Generate a simulated payment reference
+            */
+
+            $reference = 'DEMO' . strtoupper(
+                bin2hex(random_bytes(5))
             );
 
-            if ($amountDue <= 0) {
-                $error = "There is no outstanding amount on this invoice.";
-            } elseif ($amountDue != floor($amountDue)) {
-                $error = "Invoice amount must be a whole number of KES.";
-            } else {
+            /*
+            | Save successful payment
+            */
 
-                // Prevent duplicate STK requests while one is pending.
-                $pendingCheck = $pdo->prepare("
-                    SELECT payment_id
-                    FROM mpesa_payments
-                    WHERE invoice_id = ?
-                      AND payment_status = 'PENDING'
-                    LIMIT 1
-                ");
+            $paymentStmt = $pdo->prepare("
+                INSERT INTO mpesa_payments
+                (
+                    user_id,
+                    invoice_id,
+                    phone_number,
+                    amount,
+                    mpesa_receipt_number,
+                    payment_status,
+                    result_description
+                )
+                VALUES (?, ?, ?, ?, ?, 'SUCCESS', ?)
+            ");
 
-                $pendingCheck->execute([$invoiceId]);
+            $paymentStmt->execute([
+                $userId,
+                $pending['invoice_id'],
+                $pending['phone'],
+                $remaining,
+                $reference,
+                'SIMULATED PAYMENT - DEMO PIN VERIFIED. NO REAL MONEY TRANSFERRED.'
+            ]);
 
-                if ($pendingCheck->fetch()) {
-                    $error = "A payment request is already pending for this invoice.";
-                } else {
+            /*
+            | Mark semester invoice as fully paid
+            */
 
-                    try {
+            $updateInvoice = $pdo->prepare("
+                UPDATE semester_invoices
+                SET amount_paid = total_amount,
+                    payment_status = 'PAID'
+                WHERE invoice_id = ?
+                AND user_id = ?
+            ");
 
-                        // Check M-Pesa configuration.
-                        foreach (
-                            ['consumer_key', 'consumer_secret',
-                             'shortcode', 'passkey', 'callback_url'] as $key
-                        ) {
-                            if (empty($mpesa[$key])) {
-                                throw new Exception(
-                                    "M-Pesa configuration is incomplete."
-                                );
-                            }
-                        }
+            $updateInvoice->execute([
+                $pending['invoice_id'],
+                $userId
+            ]);
 
-                        $baseUrl = $mpesa['environment'] === 'sandbox'
-                            ? 'https://sandbox.safaricom.co.ke'
-                            : 'https://api.safaricom.co.ke';
+            /*
+            | Clear the student's outstanding balance
+            */
 
-                        // 1. Get access token.
-                        $curl = curl_init(
-                            $baseUrl .
-                            '/oauth/v1/generate?grant_type=client_credentials'
-                        );
+            $updateUser = $pdo->prepare("
+                UPDATE users
+                SET current_balance = 0
+                WHERE user_id = ?
+            ");
 
-                        curl_setopt_array($curl, [
-                            CURLOPT_HTTPHEADER => [
-                                'Authorization: Basic ' .
-                                base64_encode(
-                                    $mpesa['consumer_key'] . ':' .
-                                    $mpesa['consumer_secret']
-                                )
-                            ],
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_TIMEOUT => 30
-                        ]);
+            $updateUser->execute([$userId]);
 
-                        $tokenResponse = curl_exec($curl);
-                        $tokenStatus = curl_getinfo(
-                            $curl,
-                            CURLINFO_HTTP_CODE
-                        );
+            $pdo->commit();
 
-                        if ($tokenResponse === false) {
-                            throw new Exception("Could not connect to M-Pesa.");
-                        }
+            $_SESSION['invoice_demo_payment'] = [
+                'reference' => $reference,
+                'amount' => $remaining,
+                'invoice_id' => $pending['invoice_id']
+            ];
 
-                        curl_close($curl);
+            unset($_SESSION['pending_demo_payment']);
 
-                        $tokenData = json_decode($tokenResponse, true);
+            header("Location: invoice_payment_success.php");
+            exit;
 
-                        if (
-                            $tokenStatus !== 200 ||
-                            empty($tokenData['access_token'])
-                        ) {
-                            throw new Exception(
-                                "M-Pesa authentication failed."
-                            );
-                        }
+        } catch (Throwable $e) {
 
-                        $accessToken = $tokenData['access_token'];
-
-                        // 2. Generate password and timestamp.
-                        $timestamp = date('YmdHis');
-
-                        $password = base64_encode(
-                            $mpesa['shortcode'] .
-                            $mpesa['passkey'] .
-                            $timestamp
-                        );
-
-                        // 3. Prepare STK Push.
-                        $payload = [
-                            'BusinessShortCode' => $mpesa['shortcode'],
-                            'Password' => $password,
-                            'Timestamp' => $timestamp,
-                            'TransactionType' => 'CustomerPayBillOnline',
-                            'Amount' => (int) $amountDue,
-                            'PartyA' => $phone,
-                            'PartyB' => $mpesa['shortcode'],
-                            'PhoneNumber' => $phone,
-                            'CallBackURL' => $mpesa['callback_url'],
-                            'AccountReference' => 'INV-' . $invoiceId,
-                            'TransactionDesc' => 'Campus Smart Loan Payment'
-                        ];
-
-                        $curl = curl_init(
-                            $baseUrl . '/mpesa/stkpush/v1/processrequest'
-                        );
-
-                        curl_setopt_array($curl, [
-                            CURLOPT_HTTPHEADER => [
-                                'Content-Type: application/json',
-                                'Authorization: Bearer ' . $accessToken
-                            ],
-                            CURLOPT_POST => true,
-                            CURLOPT_POSTFIELDS => json_encode($payload),
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_TIMEOUT => 30
-                        ]);
-
-                        $stkResponse = curl_exec($curl);
-                        $stkStatus = curl_getinfo(
-                            $curl,
-                            CURLINFO_HTTP_CODE
-                        );
-
-                        if ($stkResponse === false) {
-                            throw new Exception("STK Push connection failed.");
-                        }
-
-                        curl_close($curl);
-
-                        $stkData = json_decode($stkResponse, true);
-
-                        if (
-                            $stkStatus !== 200 ||
-                            ($stkData['ResponseCode'] ?? '') !== '0'
-                        ) {
-                            throw new Exception(
-                                $stkData['ResponseDescription'] ??
-                                'M-Pesa rejected the payment request.'
-                            );
-                        }
-
-                        // 4. Save payment as PENDING.
-                        $savePayment = $pdo->prepare("
-                            INSERT INTO mpesa_payments (
-                                user_id,
-                                invoice_id,
-                                phone_number,
-                                amount,
-                                checkout_request_id,
-                                merchant_request_id,
-                                payment_status
-                            ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
-                        ");
-
-                        $savePayment->execute([
-                            $userId,
-                            $invoiceId,
-                            $phone,
-                            $amountDue,
-                            $stkData['CheckoutRequestID'],
-                            $stkData['MerchantRequestID']
-                        ]);
-
-                        $success = "STK Push sent successfully! Check your phone and enter your M-Pesa PIN. Your invoice will update after Safaricom confirms payment.";
-
-                    } catch (Throwable $e) {
-
-                        error_log('M-Pesa error: ' . $e->getMessage());
-
-                        $error = "Payment request failed. Please check your M-Pesa configuration and try again.";
-                    }
-                }
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
             }
+
+            $error = "Payment failed: " . $e->getMessage();
+            $showPin = true;
         }
     }
 }
@@ -267,14 +292,40 @@ require_once __DIR__ . '/../../includes/header.php';
 ?>
 
 <div style="max-width: 450px; margin: 0 auto;">
+
     <div class="card">
 
-        <h3>M-Pesa Tab Settlement</h3>
+        <h3>Pay via M-Pesa</h3>
 
-        <p>
-            <strong>Outstanding Balance:</strong>
-            KSh <?= number_format((float)$user['current_balance'], 2) ?>
-        </p>
+        <?php if ($invoice): ?>
+
+            <?php
+            $remaining = (float) $invoice['total_amount']
+                       - (float) $invoice['amount_paid'];
+            ?>
+
+            <p>
+                <strong>Semester:</strong>
+                <?= htmlspecialchars($invoice['semester_code']) ?>
+            </p>
+
+            <p>
+                <strong>Invoice Number:</strong>
+                <?= (int) $invoice['invoice_id'] ?>
+            </p>
+
+            <p>
+                <strong>Outstanding Balance:</strong>
+                KSh <?= number_format($remaining, 2) ?>
+            </p>
+
+        <?php else: ?>
+
+            <p style="color: green;">
+                You have no outstanding semester invoices.
+            </p>
+
+        <?php endif; ?>
 
         <?php if ($error): ?>
             <p style="color: var(--danger);">
@@ -282,69 +333,135 @@ require_once __DIR__ . '/../../includes/header.php';
             </p>
         <?php endif; ?>
 
-        <?php if ($success): ?>
-            <p style="color: green;">
-                <?= htmlspecialchars($success) ?>
-            </p>
-        <?php endif; ?>
-
-        <?php if (!empty($invoices) && !$success): ?>
+        <?php if (!$showPin && $invoice): ?>
 
             <form method="POST">
 
-                <div class="form-group">
-                    <label>Select Invoice</label>
-
-                    <select name="invoice_id" required>
-                        <option value="">Choose an invoice</option>
-
-                        <?php foreach ($invoices as $inv): ?>
-                            <?php
-                            $due = (float)$inv['total_amount']
-                                - (float)$inv['amount_paid'];
-                            ?>
-
-                            <?php if ($due > 0): ?>
-                                <option value="<?= (int)$inv['invoice_id'] ?>">
-                                    <?= htmlspecialchars($inv['semester_code']) ?>
-                                    - KSh <?= number_format($due, 2) ?>
-                                </option>
-                            <?php endif; ?>
-
-                        <?php endforeach; ?>
-                    </select>
-                </div>
+                <input
+                    type="hidden"
+                    name="action"
+                    value="request_payment"
+                >
 
                 <div class="form-group">
+
                     <label>M-Pesa Mobile Number</label>
 
                     <input
                         type="text"
                         name="phone"
                         value="<?= htmlspecialchars($user['phone'] ?? '') ?>"
-                        placeholder="07XXXXXXXX"
+                        placeholder="2547XXXXXXXX"
                         required
                     >
+
                 </div>
 
-                <p>
-                    The outstanding invoice amount will be requested
-                    through M-Pesa.
-                </p>
+                <div class="form-group">
 
-                <button type="submit" class="btn" style="width: 100%;">
-                    Pay via M-Pesa Express
+                    <label>Amount to Pay (KSh)</label>
+
+                    <input
+                        type="text"
+                        value="<?= number_format($remaining, 2) ?>"
+                        readonly
+                    >
+
+                </div>
+
+                <button
+                    type="submit"
+                    class="btn"
+                    style="width: 100%;"
+                >
+                    Pay via M-Pesa
                 </button>
 
             </form>
 
-        <?php elseif (!$success): ?>
+        <?php endif; ?>
 
-            <p>You currently have no unpaid invoices.</p>
+        <?php if ($showPin): ?>
+
+            <div style="
+                border: 1px solid #ddd;
+                padding: 20px;
+                border-radius: 10px;
+                margin-top: 20px;
+                text-align: center;
+            ">
+
+                <h3>Payment Request</h3>
+
+                <p>
+                    M-Pesa payment confirmation
+                </p>
+
+                <h2 style="color: green;">
+                    KSh <?= number_format(
+                        $_SESSION['pending_demo_payment']['amount'],
+                        2
+                    ) ?>
+                </h2>
+
+                <p>
+                    Phone:
+                    <?= htmlspecialchars(
+                        $_SESSION['pending_demo_payment']['phone']
+                    ) ?>
+                </p>
+
+                <form method="POST">
+
+                    <input
+                        type="hidden"
+                        name="action"
+                        value="confirm_pin"
+                    >
+
+                    <div class="form-group">
+
+                        <label>Enter 4-digit DEMO PIN</label>
+
+                        <input
+                            type="password"
+                            name="demo_pin"
+                            maxlength="4"
+                            minlength="4"
+                            pattern="[0-9]{4}"
+                            inputmode="numeric"
+                            placeholder="Enter demo PIN"
+                            required
+                        >
+
+                    </div>
+
+                    <button
+                        type="submit"
+                        class="btn"
+                        style="width: 100%;"
+                    >
+                        Confirm Payment
+                    </button>
+
+                </form>
+
+                <p style="
+                    color: #b7791f;
+                    font-size: 12px;
+                    margin-top: 15px;
+                ">
+                    DEMONSTRATION ONLY. Use demo PIN 1234.
+                    Never enter your real M-Pesa PIN here.
+                    No real money will be transferred.
+                </p>
+
+            </div>
 
         <?php endif; ?>
 
     </div>
+
 </div>
 
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
