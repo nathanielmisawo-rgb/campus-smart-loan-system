@@ -1,352 +1,283 @@
-**File: modules/pos/process_checkout.php**
-
-```php
 <?php
 
 session_start();
 
 require_once '../../config/db.php';
 
-
-// ============================================
+// =============================================
 // 1. VENDOR / ADMIN AUTHORIZATION
-// ============================================
+// =============================================
 
 if (
     !isset($_SESSION['role']) ||
-    !in_array($_SESSION['role'], ['VENDOR', 'ADMIN'], true)
+    !in_array(strtoupper($_SESSION['role']), ['VENDOR', 'ADMIN'], true)
 ) {
     header("Location: ../auth/login.php");
     exit;
 }
 
-
-// ============================================
+// =============================================
 // 2. ACCEPT POST REQUESTS ONLY
-// ============================================
+// =============================================
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header("Location: checkout.php");
     exit;
 }
 
+// =============================================
+// 3. RETRIEVE SUBMITTED INFORMATION
+// =============================================
 
-// ============================================
-// 3. RESPONSE FUNCTION
-// ============================================
+$facility_id = filter_input(INPUT_POST, 'facility_id', FILTER_VALIDATE_INT);
+$student_id = trim($_POST['student_id'] ?? '');
+$amount_input = trim($_POST['amount'] ?? '');
 
-function respond($message)
-{
-    echo "<script>";
-    echo "alert(" . json_encode($message) . ");";
-    echo "window.location.href = 'checkout.php';";
-    echo "</script>";
+// =============================================
+// 4. VALIDATE INPUT
+// =============================================
+
+if (
+    !$facility_id ||
+    $student_id === '' ||
+    !is_numeric($amount_input) ||
+    !is_finite((float)$amount_input) ||
+    (float)$amount_input <= 0
+) {
+    $_SESSION['pos_flash'] = [
+        'type' => 'error',
+        'message' => 'Please enter valid transaction details.'
+    ];
+
+    header("Location: checkout.php");
     exit;
 }
 
+// Convert amount to cents to avoid floating-point comparison issues.
+$amount = round((float)$amount_input, 2);
 
-// ============================================
-// 4. CONVERT MONEY TO CENTS
-// ============================================
+if ($amount <= 0) {
+    $_SESSION['pos_flash'] = [
+        'type' => 'error',
+        'message' => 'Transaction amount must be greater than zero.'
+    ];
 
-function toCents($value)
-{
-    $parts = explode('.', (string)$value, 2);
-
-    $whole = (int)$parts[0];
-
-    $decimal = (int)str_pad(
-        $parts[1] ?? '0',
-        2,
-        '0'
-    );
-
-    return ($whole * 100) + $decimal;
+    header("Location: checkout.php");
+    exit;
 }
 
-
-// ============================================
-// 5. RECORD TRANSACTION IN LEDGER
-// ============================================
-
-function recordTransaction(
-    PDO $pdo,
-    $userId,
-    $facilityId,
-    $amount,
-    $status
-) {
-
-    $stmt = $pdo->prepare("
-        INSERT INTO transactions
-        (
-            user_id,
-            facility_id,
-            amount,
-            transaction_type,
-            transaction_status
-        )
-        VALUES (?, ?, ?, 'purchase', ?)
-    ");
-
-    $stmt->execute([
-        $userId,
-        $facilityId,
-        $amount,
-        $status
-    ]);
-}
-
-
-// ============================================
-// 6. PROCESS CHECKOUT
-// ============================================
+// =============================================
+// 5. PROCESS TRANSACTION
+// =============================================
 
 try {
 
-    // Collect submitted information
-
-    $student_id = trim($_POST['student_id'] ?? '');
-
-    $facility_id = filter_var(
-        $_POST['facility_id'] ?? null,
-        FILTER_VALIDATE_INT
-    );
-
-    $amount_input = trim($_POST['amount'] ?? '');
-
-
-    // Validate student ID and facility
-
-    if (
-        $student_id === '' ||
-        $facility_id === false ||
-        $facility_id === null ||
-        $facility_id <= 0
-    ) {
-        respond("Please provide a valid student ID and facility.");
-    }
-
-
-    // Validate amount
-
-    if (
-        !preg_match('/^\d+(?:\.\d{1,2})?$/D', $amount_input)
-    ) {
-        respond("Invalid purchase amount.");
-    }
-
-    $amount_cents = toCents($amount_input);
-
-    // DECIMAL(10,2) maximum
-    if ($amount_cents <= 0 || $amount_cents > 9999999999) {
-        respond("Purchase amount is outside the permitted range.");
-    }
-
-    $amount = number_format(
-        $amount_cents / 100,
-        2,
-        '.',
-        ''
-    );
-
-
-    // ========================================
-    // 7. BEGIN DATABASE TRANSACTION
-    // ========================================
-
     $pdo->beginTransaction();
 
+    // =========================================
+    // 5.1 VERIFY FACILITY
+    // =========================================
 
-    // ========================================
-    // 8. VERIFY FACILITY
-    // ========================================
-
-    $facility_stmt = $pdo->prepare("
-        SELECT facility_id, facility_name, status
-        FROM facilities
-        WHERE facility_id = ?
-        AND status = 'active'
-    ");
+    $facility_stmt = $pdo->prepare(
+        "SELECT facility_id, facility_name
+         FROM facilities
+         WHERE facility_id = ?
+         AND status = 'active'"
+    );
 
     $facility_stmt->execute([$facility_id]);
 
     $facility = $facility_stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$facility) {
-
-        $pdo->rollBack();
-
-        respond("Selected facility does not exist or is inactive.");
+        throw new Exception(
+            "Selected facility does not exist or is inactive."
+        );
     }
 
+    // =========================================
+    // 5.2 FIND AND LOCK STUDENT ACCOUNT
+    // =========================================
 
-    // ========================================
-    // 9. FIND AND LOCK STUDENT ACCOUNT
-    // ========================================
-
-    $stmt = $pdo->prepare("
-        SELECT
+    $stmt = $pdo->prepare(
+        "SELECT
             user_id,
             full_name,
             student_number,
             credit_limit,
             outstanding_balance,
             account_status
-
-        FROM users
-
-        WHERE student_number = ?
-        AND role = 'student'
-
-        FOR UPDATE
-    ");
+         FROM users
+         WHERE student_number = ?
+         AND role = 'student'
+         FOR UPDATE"
+    );
 
     $stmt->execute([$student_id]);
 
     $student = $stmt->fetch(PDO::FETCH_ASSOC);
 
-
-    // Check student existence
-
     if (!$student) {
-
-        $pdo->rollBack();
-
-        respond("Student record not found.");
+        throw new Exception("Student record not found.");
     }
 
+    // =========================================
+    // 5.3 CHECK STUDENT ACCOUNT STATUS
+    // =========================================
 
-    // ========================================
-    // 10. CHECK STUDENT ACCOUNT STATUS
-    // ========================================
+    if (strtolower($student['account_status']) !== 'active') {
 
-    if ($student['account_status'] !== 'active') {
+        $log = $pdo->prepare(
+            "INSERT INTO transactions
+            (
+                user_id,
+                facility_id,
+                amount,
+                transaction_type,
+                payment_method,
+                transaction_status,
+                reference_number,
+                transaction_date
+            )
+            VALUES (?, ?, ?, 'purchase', 'POS', 'failed', ?, NOW())"
+        );
 
-        recordTransaction(
-            $pdo,
+        $reference = 'POS-' . strtoupper(bin2hex(random_bytes(6)));
+
+        $log->execute([
             $student['user_id'],
             $facility_id,
             $amount,
-            'failed'
-        );
+            $reference
+        ]);
 
         $pdo->commit();
 
-        respond(
-            "Transaction declined. Student account is suspended or inactive."
+        throw new Exception(
+            "Transaction declined. Student account is " .
+            $student['account_status'] . "."
         );
     }
 
+    // =========================================
+    // 5.4 CALCULATE AVAILABLE CREDIT
+    // =========================================
 
-    // ========================================
-    // 11. CALCULATE AVAILABLE CREDIT
-    // ========================================
+    $credit_limit = (float)$student['credit_limit'];
+    $current_balance = (float)$student['outstanding_balance'];
 
-    $credit_limit = toCents(
-        $student['credit_limit'] ?? 0
-    );
+    $available_credit = $credit_limit - $current_balance;
 
-    $outstanding_balance = toCents(
-        $student['outstanding_balance'] ?? 0
-    );
+    if ($amount > $available_credit) {
 
-    $available_credit = $credit_limit - $outstanding_balance;
+        $log = $pdo->prepare(
+            "INSERT INTO transactions
+            (
+                user_id,
+                facility_id,
+                amount,
+                transaction_type,
+                payment_method,
+                transaction_status,
+                reference_number,
+                transaction_date
+            )
+            VALUES (?, ?, ?, 'purchase', 'POS', 'failed', ?, NOW())"
+        );
 
+        $reference = 'POS-' . strtoupper(bin2hex(random_bytes(6)));
 
-    // ========================================
-    // 12. CHECK AVAILABLE CREDIT
-    // ========================================
-
-    if ($amount_cents > $available_credit) {
-
-        recordTransaction(
-            $pdo,
+        $log->execute([
             $student['user_id'],
             $facility_id,
             $amount,
-            'failed'
-        );
+            $reference
+        ]);
 
         $pdo->commit();
 
-        respond(
-            "Transaction declined! Insufficient credit."
+        throw new Exception(
+            "Insufficient credit. Available credit: KSh " .
+            number_format($available_credit, 2)
         );
     }
 
+    // =========================================
+    // 5.5 UPDATE STUDENT BALANCE
+    // =========================================
 
-    // ========================================
-    // 13. UPDATE STUDENT OUTSTANDING BALANCE
-    // ========================================
+    $new_balance = $current_balance + $amount;
 
-    $update = $pdo->prepare("
-        UPDATE users
-
-        SET outstanding_balance =
-            COALESCE(outstanding_balance, 0) + ?
-
-        WHERE user_id = ?
-    ");
+    $update = $pdo->prepare(
+        "UPDATE users
+         SET outstanding_balance = ?
+         WHERE user_id = ?"
+    );
 
     $update->execute([
-        $amount,
+        $new_balance,
         $student['user_id']
     ]);
 
+    // =========================================
+    // 5.6 RECORD APPROVED TRANSACTION
+    // =========================================
 
-    // ========================================
-    // 14. RECORD APPROVED TRANSACTION
-    // ========================================
+    $reference = 'POS-' . strtoupper(bin2hex(random_bytes(6)));
 
-    recordTransaction(
-        $pdo,
+    $log = $pdo->prepare(
+        "INSERT INTO transactions
+        (
+            user_id,
+            facility_id,
+            amount,
+            transaction_type,
+            payment_method,
+            transaction_status,
+            reference_number,
+            transaction_date
+        )
+        VALUES (?, ?, ?, 'purchase', 'POS', 'completed', ?, NOW())"
+    );
+
+    $log->execute([
         $student['user_id'],
         $facility_id,
         $amount,
-        'completed'
-    );
+        $reference
+    ]);
 
-
-    // ========================================
-    // 15. COMMIT DATABASE CHANGES
-    // ========================================
+    // =========================================
+    // 5.7 COMMIT TRANSACTION
+    // =========================================
 
     $pdo->commit();
 
+    $_SESSION['pos_flash'] = [
+        'type' => 'success',
+        'message' => 'Transaction approved! KSh ' .
+            number_format($amount, 2) .
+            ' charged to ' . $student['full_name'] . '.'
+    ];
 
-    // ========================================
-    // 16. SUCCESS MESSAGE
-    // ========================================
+} catch (Exception $e) {
 
-    respond(
-        "Transaction approved!\n\n" .
-        "Student: " . $student['full_name'] . "\n" .
-        "Facility: " . $facility['facility_name'] . "\n" .
-        "Amount: KSh " . $amount
-    );
-
-
-} catch (Throwable $e) {
-
-
-    // ========================================
-    // 17. ROLLBACK IF AN ERROR OCCURS
-    // ========================================
-
+    // Roll back only if a transaction is still active.
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
 
-    error_log(
-        "POS Transaction Error: " . $e->getMessage()
-    );
-
-    respond(
-        "Transaction could not be completed. Please try again."
-    );
-
+    $_SESSION['pos_flash'] = [
+        'type' => 'error',
+        'message' => $e->getMessage()
+    ];
 }
 
+// =============================================
+// 6. REDIRECT BACK TO CHECKOUT
+// =============================================
+
+header("Location: checkout.php");
+exit;
+
 ?>
-```
