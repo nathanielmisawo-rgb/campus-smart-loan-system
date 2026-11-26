@@ -18,19 +18,24 @@ if (!$user) {
     exit;
 }
 
+$flashSuccess = $_SESSION['flash_success'] ?? '';
+unset($_SESSION['flash_success']);
+
 // Initialize variables with default values
-$total_students = 0;
-$held_students = 0;
-$total_debt = 0.00;
+$total_students   = 0;
+$held_students    = 0;
+$total_debt       = 0.00;
 $available_credit = 0.00;
-$transactions = [];
-$invoices = [];
+$transactions     = [];
+$invoices         = [];
+$is_enrolled      = false;
 
 if ($user['role'] === 'ADMIN') {
-    $total_students = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'STUDENT'")->fetchColumn();
-    $held_students = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'STUDENT' AND account_status != 'ACTIVE'")->fetchColumn();
-    $total_debt = (float)($pdo->query("SELECT SUM(current_balance) FROM users WHERE role = 'STUDENT'")->fetchColumn() ?? 0);
+    $total_students = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'STUDENT' AND credit_limit > 0")->fetchColumn();
+    $held_students  = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'STUDENT' AND account_status != 'ACTIVE'")->fetchColumn();
+    $total_debt     = (float)($pdo->query("SELECT SUM(current_balance) FROM users WHERE role = 'STUDENT'")->fetchColumn() ?? 0);
 } elseif ($user['role'] === 'STUDENT') {
+    $is_enrolled      = ((float)$user['credit_limit'] > 0);
     $available_credit = max(0, (float)$user['credit_limit'] - (float)$user['current_balance']);
 
     $tx_stmt = $pdo->prepare("
@@ -56,6 +61,13 @@ if ($user['role'] === 'ADMIN') {
 require_once '../../includes/header.php';
 ?>
 
+<?php if ($flashSuccess !== ''): ?>
+    <div class="alert alert-success" style="margin-bottom: 1.25rem;">
+        <i data-lucide="check-circle-2" style="width: 18px; height: 18px; flex-shrink: 0;"></i>
+        <span><?= htmlspecialchars($flashSuccess) ?></span>
+    </div>
+<?php endif; ?>
+
 <!-- Top Hero Header -->
 <div class="dashboard-hero">
     <div>
@@ -66,7 +78,7 @@ require_once '../../includes/header.php';
         <h1 class="hero-title">Welcome back, <?= htmlspecialchars(explode(' ', $user['full_name'])[0]) ?></h1>
         <p class="hero-subtitle">
             <?php if ($user['role'] === 'ADMIN'): ?>
-                Monitor campus credit exposure, student ledgers, and automated CMS holds in real time.
+                Monitor campus credit exposure, self-enrolled student ledgers, and automated CMS holds in real time.
             <?php elseif ($user['role'] === 'VENDOR'): ?>
                 Ready to process instant student meal and campus facility tab transactions.
             <?php else: ?>
@@ -77,15 +89,19 @@ require_once '../../includes/header.php';
 
     <div class="hero-actions">
         <?php if ($user['role'] === 'ADMIN'): ?>
-            <a href="student_register.php" class="btn btn-primary">
-                <i data-lucide="user-plus"></i> Register Student
+            <a href="student_view.php" class="btn btn-primary">
+                <i data-lucide="users"></i> Student Credit Ledger
             </a>
-            <a href="student_view.php" class="btn btn-ghost">
-                <i data-lucide="users"></i> Student Ledger
+            <a href="../billing/cms_hold.php" class="btn btn-ghost">
+                <i data-lucide="shield-alert"></i> CMS Holds
             </a>
         <?php elseif ($user['role'] === 'VENDOR'): ?>
             <a href="../pos/checkout.php" class="btn btn-primary">
                 <i data-lucide="scan-line"></i> Launch POS Terminal
+            </a>
+        <?php elseif (!$is_enrolled): ?>
+            <a href="student_self_register.php" class="btn btn-primary">
+                <i data-lucide="sparkles"></i> Activate Smart Loan Tab
             </a>
         <?php else: ?>
             <a href="../billing/pay_mpesa.php" class="btn btn-primary">
@@ -100,11 +116,11 @@ require_once '../../includes/header.php';
     <div class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-top">
-                <span class="kpi-label">Registered Credit Accounts</span>
+                <span class="kpi-label">Enrolled Credit Accounts</span>
                 <span class="kpi-icon cyan"><i data-lucide="users"></i></span>
             </div>
             <div class="kpi-value"><?= number_format($total_students) ?></div>
-            <div class="kpi-foot">Active student credit profiles</div>
+            <div class="kpi-foot">Self-enrolled student credit profiles</div>
         </div>
 
         <div class="kpi-card">
@@ -131,15 +147,15 @@ require_once '../../includes/header.php';
         <div class="card-header">
             <div>
                 <h3>Bursar Command Center</h3>
-                <p class="card-desc">Manage student credit limits, review facility transactions, or trigger automated registration holds.</p>
+                <p class="card-desc">Audit self-enrolled student credit tabs, review facility transactions, or trigger automated CMS holds.</p>
             </div>
         </div>
         <div class="action-bar">
-            <a href="student_register.php" class="btn btn-primary">
-                <i data-lucide="user-plus"></i> Register Student Credit Tab Profile
+            <a href="student_view.php" class="btn btn-primary">
+                <i data-lucide="book-open"></i> View &amp; Manage Student Ledger
             </a>
-            <a href="student_view.php" class="btn btn-ghost">
-                <i data-lucide="book-open"></i> View &amp; Edit Student Ledger
+            <a href="../billing/cms_hold.php" class="btn btn-ghost">
+                <i data-lucide="shield-alert"></i> Open CMS Hold Console
             </a>
             <form action="../billing/cms_hold.php" method="POST" style="display: inline-flex;">
                 <button type="submit" name="trigger_hold" class="btn btn-danger" onclick="return confirm('Enforce CMS Registration Hold for overdue debts?')">
@@ -182,12 +198,36 @@ require_once '../../includes/header.php';
         </div>
     </div>
 
+<?php elseif (!$is_enrolled): ?>
+    <!-- Student Not Yet Enrolled: Self-Registration Callout -->
+    <div class="card featured-card" style="max-width: 720px; margin: 1rem auto; padding: 2rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+            <span class="kpi-icon emerald"><i data-lucide="wallet"></i></span>
+            <div>
+                <h2 style="margin: 0; font-size: 1.35rem;">You haven't activated your Smart Loan Tab yet</h2>
+                <p style="margin: 0.2rem 0 0; color: var(--text-secondary); font-size: 0.9rem;">
+                    Your Strathmore SSO identity (<strong><?= htmlspecialchars($user['student_id']) ?></strong>) is verified and eligible for self-enrollment.
+                </p>
+            </div>
+        </div>
+
+        <ul style="margin: 1.25rem 0 1.5rem; padding-left: 1.25rem; color: var(--text-secondary); line-height: 1.7; font-size: 0.92rem;">
+            <li>Choose a semester credit limit of <strong>KSh 2,500</strong>, <strong>KSh 5,000</strong>, or <strong>KSh 7,500</strong> at <strong>0% interest</strong>.</li>
+            <li>Tap your Student ID at the Central Cafeteria, Library Printing Hub, or Campus Book Store.</li>
+            <li>Settle your consolidated semester tab anytime via M-Pesa STK Express before exams.</li>
+        </ul>
+
+        <a href="student_self_register.php" class="btn btn-primary" style="padding: 0.85rem 1.4rem;">
+            <i data-lucide="sparkles"></i> Self-Register for Smart Loan Tab Now
+        </a>
+    </div>
+
 <?php else: ?>
     <?php
-        $credit_limit = (float)$user['credit_limit'];
+        $credit_limit    = (float)$user['credit_limit'];
         $current_balance = (float)$user['current_balance'];
-        $usage_pct = $credit_limit > 0 ? min(100, round(($current_balance / $credit_limit) * 100, 1)) : 0;
-        $is_active = ($user['account_status'] === 'ACTIVE');
+        $usage_pct       = $credit_limit > 0 ? min(100, round(($current_balance / $credit_limit) * 100, 1)) : 0;
+        $is_active       = ($user['account_status'] === 'ACTIVE');
     ?>
 
     <!-- Student KPI Bento Grid -->
