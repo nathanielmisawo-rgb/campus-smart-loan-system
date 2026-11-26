@@ -28,7 +28,7 @@ if (!$user) {
 
 /*
 |--------------------------------------------------------------------------
-| Get the student's outstanding semester invoice
+| Fetch or auto-sync outstanding semester invoice with current_balance
 |--------------------------------------------------------------------------
 */
 $invoiceStmt = $pdo->prepare("
@@ -36,12 +36,41 @@ $invoiceStmt = $pdo->prepare("
     FROM semester_invoices
     WHERE user_id = ?
       AND payment_status IN ('UNPAID', 'OVERDUE')
-      AND total_amount > amount_paid
     ORDER BY created_at DESC
     LIMIT 1
 ");
 $invoiceStmt->execute([$userId]);
 $invoice = $invoiceStmt->fetch();
+
+$currentBalance = (float) $user['current_balance'];
+
+if ($currentBalance > 0) {
+    if (!$invoice) {
+        // Automatically generate an invoice for the student's active tab balance
+        $createInv = $pdo->prepare("
+            INSERT INTO semester_invoices (user_id, semester_code, total_amount, amount_paid, payment_status)
+            VALUES (?, 'SEM_1_2026', ?, 0.00, 'UNPAID')
+        ");
+        $createInv->execute([$userId, $currentBalance]);
+
+        $invoiceStmt->execute([$userId]);
+        $invoice = $invoiceStmt->fetch();
+    } else {
+        // Keep existing unpaid invoice aligned if the student drew additional loans
+        $expectedTotal = (float) $invoice['amount_paid'] + $currentBalance;
+        if (abs((float) $invoice['total_amount'] - $expectedTotal) > 0.01) {
+            $syncInv = $pdo->prepare("
+                UPDATE semester_invoices
+                SET total_amount = ?
+                WHERE invoice_id = ?
+            ");
+            $syncInv->execute([$expectedTotal, $invoice['invoice_id']]);
+
+            $invoiceStmt->execute([$userId]);
+            $invoice = $invoiceStmt->fetch();
+        }
+    }
+}
 
 $error = '';
 $showPin = false;
@@ -57,7 +86,6 @@ if (
 ) {
     $phone = trim($_POST['phone'] ?? '');
 
-    // Normalize 07XXXXXXXX or 01XXXXXXXX to 2547XXXXXXXX / 2541XXXXXXXX
     if (strlen($phone) === 10 && $phone[0] === '0' && ($phone[1] === '7' || $phone[1] === '1')) {
         $phone = '254' . substr($phone, 1);
     }
@@ -69,16 +97,14 @@ if (
         ctype_digit($phone)
     );
 
-    if (!$invoice) {
-        $error = "You have no outstanding semester invoice.";
+    if (!$invoice || $currentBalance <= 0) {
+        $error = "You have no outstanding balance to pay.";
     } elseif (!$isValidPhone) {
         $error = "Enter a valid Kenyan mobile number (e.g. 254712345678).";
     } else {
         $remaining = (float) $invoice['total_amount'] - (float) $invoice['amount_paid'];
 
-        if (abs($remaining - (float) $user['current_balance']) > 0.01) {
-            $error = "Your invoice and outstanding balance do not match. Please contact the administrator.";
-        } elseif ($remaining <= 0) {
+        if ($remaining <= 0) {
             $error = "There is no outstanding amount to pay.";
         } else {
             $_SESSION['pending_demo_payment'] = [
@@ -118,7 +144,6 @@ if (
         try {
             $pdo->beginTransaction();
 
-            // Lock the invoice and user records
             $lockInvoice = $pdo->prepare("
                 SELECT *
                 FROM semester_invoices
@@ -156,11 +181,9 @@ if (
                 throw new Exception("Outstanding balance has changed. Please try again.");
             }
 
-            // Generate simulated M-Pesa receipt & Daraja CheckoutRequestID
             $reference         = 'DEMO' . strtoupper(bin2hex(random_bytes(5)));
             $checkoutRequestId = 'ws_CO_' . date('YmdHis') . '_' . random_int(1000, 9999);
 
-            // Save successful payment
             $paymentStmt = $pdo->prepare("
                 INSERT INTO mpesa_payments
                 (
@@ -185,7 +208,6 @@ if (
                 'SIMULATED PAYMENT - DEMO PIN VERIFIED. NO REAL MONEY TRANSFERRED.'
             ]);
 
-            // Mark semester invoice as fully paid and clear invoice hold flag
             $updateInvoice = $pdo->prepare("
                 UPDATE semester_invoices
                 SET amount_paid = total_amount,
@@ -196,7 +218,6 @@ if (
             ");
             $updateInvoice->execute([$pending['invoice_id'], $userId]);
 
-            // Clear student's outstanding balance and automatically lift HELD status
             $updateUser = $pdo->prepare("
                 UPDATE users
                 SET current_balance = 0,
@@ -236,7 +257,7 @@ require_once __DIR__ . '/../../includes/header.php';
     <div class="card">
         <h3>Pay via M-Pesa</h3>
 
-        <?php if ($invoice): ?>
+        <?php if ($invoice && $currentBalance > 0): ?>
             <?php $remaining = (float) $invoice['total_amount'] - (float) $invoice['amount_paid']; ?>
 
             <p>
@@ -246,7 +267,7 @@ require_once __DIR__ . '/../../includes/header.php';
 
             <p>
                 <strong>Invoice Number:</strong>
-                <?= (int) $invoice['invoice_id'] ?>
+                #<?= (int) $invoice['invoice_id'] ?>
             </p>
 
             <p>
@@ -268,7 +289,7 @@ require_once __DIR__ . '/../../includes/header.php';
             </div>
         <?php endif; ?>
 
-        <?php if (!$showPin && $invoice): ?>
+        <?php if (!$showPin && $invoice && $currentBalance > 0): ?>
             <form method="POST">
                 <input type="hidden" name="action" value="request_payment">
 
