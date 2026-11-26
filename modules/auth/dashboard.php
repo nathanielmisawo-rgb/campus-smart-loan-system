@@ -19,15 +19,112 @@ if (!$user) {
 }
 
 $flashSuccess = $_SESSION['flash_success'] ?? '';
-unset($_SESSION['flash_success']);
+$flashError   = $_SESSION['flash_error'] ?? '';
+unset($_SESSION['flash_success'], $_SESSION['flash_error']);
 
-// Initialize variables with default values
+// Handle Student Self-Service Loan Request
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['take_student_loan']) &&
+    $user['role'] === 'STUDENT'
+) {
+    $facility_id  = filter_input(INPUT_POST, 'facility_id', FILTER_VALIDATE_INT);
+    $amount_input = trim($_POST['loan_amount'] ?? '');
+    $purpose      = trim($_POST['loan_purpose'] ?? '');
+    $amount       = is_numeric($amount_input) ? round((float)$amount_input, 2) : 0.0;
+
+    if (!$facility_id || $amount <= 0) {
+        $_SESSION['flash_error'] = 'Please select a campus facility/category and enter a valid loan amount greater than KSh 0.';
+        header("Location: dashboard.php");
+        exit;
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        // Lock student row to prevent concurrent over-borrowing
+        $lockStmt = $pdo->prepare("
+            SELECT user_id, credit_limit, current_balance, account_status
+            FROM users
+            WHERE user_id = ? AND role = 'STUDENT'
+            FOR UPDATE
+        ");
+        $lockStmt->execute([$user['user_id']]);
+        $lockedUser = $lockStmt->fetch();
+
+        // Verify facility exists
+        $facStmt = $pdo->prepare("SELECT facility_id, facility_name FROM facilities WHERE facility_id = ?");
+        $facStmt->execute([$facility_id]);
+        $facility = $facStmt->fetch();
+
+        if (!$lockedUser || !$facility) {
+            throw new Exception('Invalid student account or campus facility selected.');
+        }
+
+        $creditLimit     = (float)$lockedUser['credit_limit'];
+        $currentBalance  = (float)$lockedUser['current_balance'];
+        $availableCredit = max(0, $creditLimit - $currentBalance);
+
+        if ($creditLimit <= 0) {
+            throw new Exception('You have not activated your Smart Loan Tab yet. Please self-register first.');
+        }
+
+        if (strtoupper($lockedUser['account_status']) !== 'ACTIVE') {
+            $logDeclined = $pdo->prepare("INSERT INTO transactions (user_id, facility_id, amount, status) VALUES (?, ?, ?, 'DECLINED')");
+            $logDeclined->execute([$lockedUser['user_id'], $facility_id, $amount]);
+            $pdo->commit();
+
+            $_SESSION['flash_error'] = 'Loan declined: Your account is currently ' . $lockedUser['account_status'] . '. Settle overdue balances or contact the Admin.';
+            header("Location: dashboard.php");
+            exit;
+        }
+
+        // Enforce student credit limit check
+        if ($amount > $availableCredit) {
+            $logDeclined = $pdo->prepare("INSERT INTO transactions (user_id, facility_id, amount, status) VALUES (?, ?, ?, 'DECLINED')");
+            $logDeclined->execute([$lockedUser['user_id'], $facility_id, $amount]);
+            $pdo->commit();
+
+            $_SESSION['flash_error'] = 'Loan request of KSh ' . number_format($amount, 2)
+                . ' declined! It exceeds your available credit limit of KSh ' . number_format($availableCredit, 2)
+                . '. Visit the Bursar Admin if you need a higher credit limit.';
+            header("Location: dashboard.php");
+            exit;
+        }
+
+        // Approved: update student's owed balance and log transaction
+        $newBalance = $currentBalance + $amount;
+        $updStmt = $pdo->prepare("UPDATE users SET current_balance = ? WHERE user_id = ?");
+        $updStmt->execute([$newBalance, $lockedUser['user_id']]);
+
+        $logApproved = $pdo->prepare("INSERT INTO transactions (user_id, facility_id, amount, status) VALUES (?, ?, ?, 'APPROVED')");
+        $logApproved->execute([$lockedUser['user_id'], $facility_id, $amount]);
+
+        $pdo->commit();
+
+        $note = $purpose !== '' ? ' (' . $purpose . ')' : '';
+        $_SESSION['flash_success'] = 'Loan approved! KSh ' . number_format($amount, 2)
+            . ' credited for ' . $facility['facility_name'] . $note
+            . '. New balance owed: KSh ' . number_format($newBalance, 2) . '.';
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $_SESSION['flash_error'] = 'Loan request failed: ' . $e->getMessage();
+    }
+
+    header("Location: dashboard.php");
+    exit;
+}
+
+// Initialize dashboard variables
 $total_students   = 0;
 $held_students    = 0;
 $total_debt       = 0.00;
 $available_credit = 0.00;
 $transactions     = [];
 $invoices         = [];
+$facilities       = [];
 $is_enrolled      = false;
 
 if ($user['role'] === 'ADMIN') {
@@ -37,6 +134,7 @@ if ($user['role'] === 'ADMIN') {
 } elseif ($user['role'] === 'STUDENT') {
     $is_enrolled      = ((float)$user['credit_limit'] > 0);
     $available_credit = max(0, (float)$user['credit_limit'] - (float)$user['current_balance']);
+    $facilities       = $pdo->query("SELECT facility_id, facility_name, category FROM facilities ORDER BY facility_name")->fetchAll();
 
     $tx_stmt = $pdo->prepare("
         SELECT t.*, f.facility_name 
@@ -48,7 +146,6 @@ if ($user['role'] === 'ADMIN') {
     $tx_stmt->execute([$_SESSION['user_id']]);
     $transactions = $tx_stmt->fetchAll();
 
-    // Fetch consolidated semester invoices
     try {
         $inv_stmt = $pdo->prepare("SELECT * FROM semester_invoices WHERE user_id = ? ORDER BY created_at DESC");
         $inv_stmt->execute([$_SESSION['user_id']]);
@@ -65,6 +162,13 @@ require_once '../../includes/header.php';
     <div class="alert alert-success" style="margin-bottom: 1.25rem;">
         <i data-lucide="check-circle-2" style="width: 18px; height: 18px; flex-shrink: 0;"></i>
         <span><?= htmlspecialchars($flashSuccess) ?></span>
+    </div>
+<?php endif; ?>
+
+<?php if ($flashError !== ''): ?>
+    <div class="alert alert-error" style="margin-bottom: 1.25rem;">
+        <i data-lucide="alert-circle" style="width: 18px; height: 18px; flex-shrink: 0;"></i>
+        <span><?= htmlspecialchars($flashError) ?></span>
     </div>
 <?php endif; ?>
 
@@ -104,7 +208,10 @@ require_once '../../includes/header.php';
                 <i data-lucide="sparkles"></i> Activate Smart Loan Tab
             </a>
         <?php else: ?>
-            <a href="../billing/pay_mpesa.php" class="btn btn-primary">
+            <a href="#self-loan-box" class="btn btn-primary">
+                <i data-lucide="hand-coins"></i> Request Instant Loan
+            </a>
+            <a href="../billing/pay_mpesa.php" class="btn btn-ghost">
                 <i data-lucide="smartphone"></i> Settle Tab via M-Pesa
             </a>
         <?php endif; ?>
@@ -147,7 +254,7 @@ require_once '../../includes/header.php';
         <div class="card-header">
             <div>
                 <h3>Bursar Command Center</h3>
-                <p class="card-desc">Audit self-enrolled student credit tabs, review facility transactions, or trigger automated CMS holds.</p>
+                <p class="card-desc">Adjust student credit limits, audit transactions, or trigger automated CMS holds.</p>
             </div>
         </div>
         <div class="action-bar">
@@ -213,8 +320,8 @@ require_once '../../includes/header.php';
 
         <ul style="margin: 1.25rem 0 1.5rem; padding-left: 1.25rem; color: var(--text-secondary); line-height: 1.7; font-size: 0.92rem;">
             <li>Choose a semester credit limit of <strong>KSh 2,500</strong>, <strong>KSh 5,000</strong>, or <strong>KSh 7,500</strong> at <strong>0% interest</strong>.</li>
-            <li>Tap your Student ID at the Central Cafeteria, Library Printing Hub, or Campus Book Store.</li>
-            <li>Settle your consolidated semester tab anytime via M-Pesa STK Express before exams.</li>
+            <li>Borrow funds directly from your student portal or tap your Student ID at campus facilities.</li>
+            <li>Settle your consolidated semester tab anytime via M-Pesa before exams.</li>
         </ul>
 
         <a href="student_self_register.php" class="btn btn-primary" style="padding: 0.85rem 1.4rem;">
@@ -266,6 +373,80 @@ require_once '../../includes/header.php';
         </div>
     </div>
 
+    <!-- Self-Service Student Micro-Loan Drawer -->
+    <div id="self-loan-box" class="card">
+        <div class="card-header">
+            <div>
+                <h3 style="display: flex; align-items: center; gap: 0.5rem;">
+                    <i data-lucide="hand-coins" style="width: 20px; height: 20px; color: #10b981;"></i>
+                    Request / Take Student Micro-Loan
+                </h3>
+                <p class="card-desc">
+                    Borrow instantly up to your available credit limit (<strong>KSh <?= number_format($available_credit, 2) ?></strong>). Requests above your limit require Admin limit adjustment.
+                </p>
+            </div>
+            <span class="status-pill <?= $is_active ? 'pill-success' : 'pill-danger' ?>">
+                Max Eligible: KSh <?= number_format($available_credit, 2) ?>
+            </span>
+        </div>
+
+        <form method="POST" action="dashboard.php" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; align-items: end;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="facility_id">Campus Facility / Expense Category</label>
+                <select id="facility_id" name="facility_id" required>
+                    <?php foreach ($facilities as $fac): ?>
+                        <option value="<?= (int)$fac['facility_id'] ?>">
+                            <?= htmlspecialchars($fac['facility_name']) ?> (<?= htmlspecialchars($fac['category']) ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="loan_amount">Loan Amount (KSh)</label>
+                <input
+                    id="loan_amount"
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    name="loan_amount"
+                    placeholder="e.g. 2500"
+                    required
+                >
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="loan_purpose">Note / Purpose (Optional)</label>
+                <input
+                    id="loan_purpose"
+                    type="text"
+                    name="loan_purpose"
+                    placeholder="e.g. Lunch & Printing"
+                >
+            </div>
+
+            <div>
+                <button type="submit" name="take_student_loan" value="1" class="btn btn-primary" style="width: 100%; padding: 0.78rem 1rem;">
+                    <i data-lucide="zap"></i> Apply &amp; Draw Loan
+                </button>
+            </div>
+        </form>
+
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.85rem;">
+            <span style="font-size: 0.8rem; color: var(--text-muted); align-self: center;">Quick amounts:</span>
+            <?php foreach ([500, 1000, 2500, 4000] as $preset): ?>
+                <button
+                    type="button"
+                    class="btn btn-ghost"
+                    style="padding: 0.25rem 0.65rem; font-size: 0.78rem;"
+                    onclick="document.getElementById('loan_amount').value='<?= $preset ?>';"
+                >
+                    KSh <?= number_format($preset) ?>
+                </button>
+            <?php endforeach; ?>
+        </div>
+    </div>
+
     <!-- Credit Utilization Meter Card -->
     <div class="card utilization-card">
         <div class="utilization-header">
@@ -284,12 +465,12 @@ require_once '../../includes/header.php';
         </div>
     </div>
 
-    <!-- Recent POS Transactions -->
+    <!-- Recent Loan & POS Transactions -->
     <div class="card">
         <div class="card-header">
             <div>
-                <h3>Recent POS Transactions</h3>
-                <p class="card-desc">Live feed of your campus cafeteria, bookstore, and facility tab charges.</p>
+                <h3>Recent Loan &amp; POS Transactions</h3>
+                <p class="card-desc">Live feed of your self-service loan draws and campus facility charges.</p>
             </div>
             <span class="count-badge"><?= count($transactions) ?> Records</span>
         </div>
@@ -308,7 +489,7 @@ require_once '../../includes/header.php';
                         <tr>
                             <td colspan="4" class="empty-state">
                                 <i data-lucide="inbox"></i>
-                                <span>No POS transactions recorded yet.</span>
+                                <span>No transactions recorded yet. Use the form above to take a loan.</span>
                             </td>
                         </tr>
                     <?php else: ?>
@@ -319,7 +500,7 @@ require_once '../../includes/header.php';
                             <td class="td-num">KSh <?= number_format((float)$tx['amount'], 2) ?></td>
                             <td>
                                 <?php $txOk = in_array(strtoupper($tx['status']), ['COMPLETED', 'APPROVED', 'PAID', 'SUCCESS']); ?>
-                                <span class="status-pill <?= $txOk ? 'pill-success' : 'pill-warning' ?>">
+                                <span class="status-pill <?= $txOk ? 'pill-success' : 'pill-danger' ?>">
                                     <?= htmlspecialchars($tx['status']) ?>
                                 </span>
                             </td>
