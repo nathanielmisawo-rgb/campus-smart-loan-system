@@ -11,16 +11,16 @@ if (
     exit;
 }
 
-$userId = (int)$_SESSION['user_id'];
+$userId = (int) $_SESSION['user_id'];
 
-$stmt =$pdo->prepare("
+$stmt = $pdo->prepare("
     SELECT user_id, full_name, phone, current_balance, account_status
     FROM users
     WHERE user_id = ?
       AND role = 'STUDENT'
 ");
 $stmt->execute([$userId]);
-$user =$stmt->fetch();
+$user = $stmt->fetch();
 
 if (!$user) {
     die("Student account not found.");
@@ -31,7 +31,7 @@ if (!$user) {
 | Get the student's outstanding semester invoice
 |--------------------------------------------------------------------------
 */
-$invoiceStmt =$pdo->prepare("
+$invoiceStmt = $pdo->prepare("
     SELECT *
     FROM semester_invoices
     WHERE user_id = ?
@@ -41,9 +41,10 @@ $invoiceStmt =$pdo->prepare("
     LIMIT 1
 ");
 $invoiceStmt->execute([$userId]);
-$invoice =$invoiceStmt->fetch();
+$invoice = $invoiceStmt->fetch();
 
-$error = '';$showPin = false;
+$error = '';
+$showPin = false;
 
 /*
 |--------------------------------------------------------------------------
@@ -57,17 +58,28 @@ if (
     $phone = trim($_POST['phone'] ?? '');
 
     // Normalize 07XXXXXXXX or 01XXXXXXXX to 2547XXXXXXXX / 2541XXXXXXXX
-    if (preg_match('/^0([17][0-9]{8})$/', $phone,$matches)) {
-        $phone = '254' .$matches[1];
+    if (strlen($phone) === 10 && $phone[0] === '0' && ($phone[1] === '7' || $phone[1] === '1')) {
+        $phone = '254' . substr($phone, 1);
     }
 
-    if (!$invoice) {$error = "You have no outstanding semester invoice.";
-    } elseif (!preg_match('/^254[17][0-9]{8}$/', $phone)) {$error = "Enter a valid Kenyan mobile number (e.g. 254712345678).";
-    } else {
-        $remaining = (float) $invoice['total_amount'] - (float)$invoice['amount_paid'];
+    $isValidPhone = (
+        strlen($phone) === 12 &&
+        str_starts_with($phone, '254') &&
+        ($phone[3] === '7' || $phone[3] === '1') &&
+        ctype_digit($phone)
+    );
 
-        if (abs($remaining - (float) $user['current_balance']) > 0.01) {$error = "Your invoice and outstanding balance do not match. Please contact the administrator.";
-        } elseif ($remaining <= 0) {$error = "There is no outstanding amount to pay.";
+    if (!$invoice) {
+        $error = "You have no outstanding semester invoice.";
+    } elseif (!$isValidPhone) {
+        $error = "Enter a valid Kenyan mobile number (e.g. 254712345678).";
+    } else {
+        $remaining = (float) $invoice['total_amount'] - (float) $invoice['amount_paid'];
+
+        if (abs($remaining - (float) $user['current_balance']) > 0.01) {
+            $error = "Your invoice and outstanding balance do not match. Please contact the administrator.";
+        } elseif ($remaining <= 0) {
+            $error = "There is no outstanding amount to pay.";
         } else {
             $_SESSION['pending_demo_payment'] = [
                 'invoice_id' => (int) $invoice['invoice_id'],
@@ -90,38 +102,41 @@ if (
     $_SERVER['REQUEST_METHOD'] === 'POST' &&
     ($_POST['action'] ?? '') === 'confirm_pin'
 ) {
-    $pending =$_SESSION['pending_demo_payment'] ?? null;
+    $pending = $_SESSION['pending_demo_payment'] ?? null;
     $pin     = trim($_POST['demo_pin'] ?? '');
 
-    if (!$pending \vert{}\vert{} (time() -$pending['created_at']) > 600) {
-        unset($_SESSION['pending_demo_payment']);$error = "Payment request expired. Please start again.";
-    } elseif (!preg_match('/^[0-9]{4}$/', $pin)) {$error = "Enter exactly four digits.";
+    if (!$pending || (time() - $pending['created_at']) > 600) {
+        unset($_SESSION['pending_demo_payment']);
+        $error = "Payment request expired. Please start again.";
+    } elseif (strlen($pin) !== 4 || !ctype_digit($pin)) {
+        $error = "Enter exactly four digits.";
         $showPin = true;
-    } elseif ($pin !== '1234') {$error = "Incorrect demonstration PIN. Please try again.";
+    } elseif ($pin !== '1234') {
+        $error = "Incorrect demonstration PIN. Please try again.";
         $showPin = true;
     } else {
         try {
             $pdo->beginTransaction();
 
             // Lock the invoice and user records
-            $lockInvoice =$pdo->prepare("
+            $lockInvoice = $pdo->prepare("
                 SELECT *
                 FROM semester_invoices
                 WHERE invoice_id = ?
                   AND user_id = ?
                 FOR UPDATE
             ");
-            $lockInvoice->execute([$pending['invoice_id'],$userId]);
-            $lockedInvoice =$lockInvoice->fetch();
+            $lockInvoice->execute([$pending['invoice_id'], $userId]);
+            $lockedInvoice = $lockInvoice->fetch();
 
-            $lockUser =$pdo->prepare("
+            $lockUser = $pdo->prepare("
                 SELECT current_balance
                 FROM users
                 WHERE user_id = ?
                 FOR UPDATE
             ");
             $lockUser->execute([$userId]);
-            $lockedUser =$lockUser->fetch();
+            $lockedUser = $lockUser->fetch();
 
             if (
                 !$lockedInvoice ||
@@ -131,11 +146,12 @@ if (
                 throw new Exception("Invoice is unavailable or has already been paid.");
             }
 
-            $remaining = (float) $lockedInvoice['total_amount'] - (float)$lockedInvoice['amount_paid'];
+            $remaining = (float) $lockedInvoice['total_amount'] - (float) $lockedInvoice['amount_paid'];
 
             if (
-                abs($remaining - (float)$pending['amount']) > 0.01 ||
-                abs($remaining - (float) $lockedUser['current_balance']) > 0.01 \vert{}\vert{}$remaining <= 0
+                abs($remaining - (float) $pending['amount']) > 0.01 ||
+                abs($remaining - (float) $lockedUser['current_balance']) > 0.01 ||
+                $remaining <= 0
             ) {
                 throw new Exception("Outstanding balance has changed. Please try again.");
             }
@@ -145,7 +161,7 @@ if (
             $checkoutRequestId = 'ws_CO_' . date('YmdHis') . '_' . random_int(1000, 9999);
 
             // Save successful payment
-            $paymentStmt =$pdo->prepare("
+            $paymentStmt = $pdo->prepare("
                 INSERT INTO mpesa_payments
                 (
                     user_id,
@@ -160,14 +176,17 @@ if (
                 VALUES (?, ?, ?, ?, ?, ?, 'SUCCESS', ?)
             ");
             $paymentStmt->execute([
-                $userId,$pending['invoice_id'],
-                $pending['phone'],$remaining,
-                $checkoutRequestId,$reference,
+                $userId,
+                $pending['invoice_id'],
+                $pending['phone'],
+                $remaining,
+                $checkoutRequestId,
+                $reference,
                 'SIMULATED PAYMENT - DEMO PIN VERIFIED. NO REAL MONEY TRANSFERRED.'
             ]);
 
             // Mark semester invoice as fully paid and clear invoice hold flag
-            $updateInvoice =$pdo->prepare("
+            $updateInvoice = $pdo->prepare("
                 UPDATE semester_invoices
                 SET amount_paid = total_amount,
                     payment_status = 'PAID',
@@ -175,10 +194,10 @@ if (
                 WHERE invoice_id = ?
                   AND user_id = ?
             ");
-            $updateInvoice->execute([$pending['invoice_id'],$userId]);
+            $updateInvoice->execute([$pending['invoice_id'], $userId]);
 
             // Clear student's outstanding balance and automatically lift HELD status
-            $updateUser =$pdo->prepare("
+            $updateUser = $pdo->prepare("
                 UPDATE users
                 SET current_balance = 0,
                     account_status = CASE WHEN account_status = 'HELD' THEN 'ACTIVE' ELSE account_status END
@@ -188,7 +207,8 @@ if (
 
             $pdo->commit();
 
-            $_SESSION['account_status'] = 'ACTIVE';$_SESSION['invoice_demo_payment'] = [
+            $_SESSION['account_status'] = 'ACTIVE';
+            $_SESSION['invoice_demo_payment'] = [
                 'reference'  => $reference,
                 'amount'     => $remaining,
                 'invoice_id' => $pending['invoice_id']
@@ -199,10 +219,12 @@ if (
             header("Location: invoice_payment_success.php");
             exit;
         } catch (Throwable $e) {
-            if ($pdo->inTransaction()) {$pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
             }
 
-            $error = "Payment failed: " . $e->getMessage();$showPin = true;
+            $error = "Payment failed: " . $e->getMessage();
+            $showPin = true;
         }
     }
 }
@@ -215,7 +237,7 @@ require_once __DIR__ . '/../../includes/header.php';
         <h3>Pay via M-Pesa</h3>
 
         <?php if ($invoice): ?>
-            <?php $remaining = (float) $invoice['total_amount'] - (float)$invoice['amount_paid']; ?>
+            <?php $remaining = (float) $invoice['total_amount'] - (float) $invoice['amount_paid']; ?>
 
             <p>
                 <strong>Semester:</strong>
@@ -246,7 +268,7 @@ require_once __DIR__ . '/../../includes/header.php';
             </div>
         <?php endif; ?>
 
-        <?php if (!$showPin &&$invoice): ?>
+        <?php if (!$showPin && $invoice): ?>
             <form method="POST">
                 <input type="hidden" name="action" value="request_payment">
 
@@ -316,4 +338,23 @@ require_once __DIR__ . '/../../includes/header.php';
                         >
                     </div>
 
-                    <button
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">
+                        Confirm Payment
+                    </button>
+                </form>
+
+                <p style="
+                    color: #fbbf24;
+                    font-size: 12px;
+                    margin-top: 15px;
+                    margin-bottom: 0;
+                ">
+                    DEMONSTRATION ONLY. Use demo PIN <strong>1234</strong>.
+                    Never enter your real M-Pesa PIN here. No real money will be transferred.
+                </p>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<?php require_once __DIR__ . '/../../includes/footer.php'; ?>
